@@ -28,14 +28,13 @@ export default function Home() {
 
   // Production Output Graph
   const productionData = [
-    { day: "Mon", output: 120 },
-    { day: "Tue", output: 98 },
-    { day: "Wed", output: 140 },
-    { day: "Thu", output: 110 },
-    { day: "Fri", output: 170 },
-    { day: "Sat", output: 150 },
-    { day: "Sun", output: 90 },
-  ];
+  { machine: "A01", error: 2 },
+  { machine: "A02", error: 5 },
+  { machine: "A03", error: 1 },
+  { machine: "A04", error: 7 },
+  { machine: "A05", error: 3 },
+  { machine: "A06", error: 4 },
+];
 
   // Downtime Graph
   const downtimeData = [
@@ -47,12 +46,33 @@ export default function Home() {
   ];
 
   // Pie Chart Data
-  const statusData = [
+  const statusData = 
+  [
+    
     { name: "Running", value: 28 },
     { name: "Alarm", value: 3 },
     { name: "Idle", value: 11 },
   ];
-
+  const maintenanceSchedule = [
+  {
+    machine: "A01",
+    lastPM: "2026-05-10",
+    nextPM: "2026-05-25",
+    status: "Due Soon",
+  },
+  {
+    machine: "A02",
+    lastPM: "2026-05-01",
+    nextPM: "2026-05-16",
+    status: "Overdue",
+  },
+  {
+    machine: "A03",
+    lastPM: "2026-05-15",
+    nextPM: "2026-05-30",
+    status: "Normal",
+  },
+];
   const COLORS = [
     "#22c55e",
     "#ef4444",
@@ -146,7 +166,87 @@ export default function Home() {
         </div>
 
       </section>
+{/* ================= PM SCHEDULE ================= */}
 
+<section className="px-8 mt-8">
+
+  <div className="bg-[#1e293b] rounded-2xl p-4 shadow-lg">
+
+    <div className="flex items-center justify-between mb-4">
+
+      <h2 className="text-xl font-bold">
+        Maintenance Schedule (15 Days)
+      </h2>
+
+      <div className="bg-cyan-600 px-3 py-2 rounded-xl text-sm">
+        PM Every 15 Days
+      </div>
+
+    </div>
+
+    <table className="w-full text-sm">
+
+      <thead className="text-left text-gray-400 border-b border-gray-700">
+
+        <tr>
+
+          <th className="py-3">Machine</th>
+          <th>Last PM</th>
+          <th>Next PM</th>
+          <th>Status</th>
+
+        </tr>
+
+      </thead>
+
+      <tbody>
+
+        {maintenanceSchedule.map((item, index) => (
+
+          <tr
+            key={index}
+            className="border-b border-gray-800"
+          >
+
+            <td className="py-3 font-semibold">
+              {item.machine}
+            </td>
+
+            <td>
+              {item.lastPM}
+            </td>
+
+            <td>
+              {item.nextPM}
+            </td>
+
+            <td>
+
+              <span
+                className={
+                  item.status === "Overdue"
+                    ? "bg-red-600 px-3 py-1 rounded-full text-xs"
+                    : item.status === "Due Soon"
+                    ? "bg-yellow-500 px-3 py-1 rounded-full text-xs"
+                    : "bg-green-600 px-3 py-1 rounded-full text-xs"
+                }
+              >
+                {item.status}
+              </span>
+
+            </td>
+
+          </tr>
+
+        ))}
+
+      </tbody>
+
+    </table>
+
+  </div>
+
+</section>
       {/* ================= GRAPH SECTION ================= */}
 
       <section className="grid grid-cols-1 xl:grid-cols-3 gap-4 px-8">
@@ -156,7 +256,7 @@ export default function Home() {
         <div className="bg-[#1e293b] rounded-2xl p-4 col-span-2 shadow-lg">
 
           <h2 className="text-2xl font-bold mb-6">
-            Production Output
+            Machine Error Monitoring
           </h2>
 
           <div style={{ width: "100%", height: 320 }}>
@@ -167,7 +267,7 @@ export default function Home() {
 
                 <CartesianGrid strokeDasharray="3 3" />
 
-                <XAxis dataKey="day" />
+                <XAxis dataKey="machine" />
 
                 <YAxis />
 
@@ -175,8 +275,8 @@ export default function Home() {
 
                 <Line
                   type="monotone"
-                  dataKey="output"
-                  stroke="#06b6d4"
+                  dataKey="error"
+                  stroke="#ef4444"
                   strokeWidth={4}
                 />
 
