@@ -1,5 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { supabase } from "./supabase";
+
 import {
   LineChart,
   Line,
@@ -18,6 +22,43 @@ import {
 
 export default function Home() {
 
+  const router = useRouter();
+
+  const [historyData, setHistoryData] = useState<any[]>([]);
+
+  useEffect(() => {
+
+    const login = localStorage.getItem("login");
+
+    if (login !== "true") {
+
+      router.push("/login");
+
+    }
+
+    const fetchData = async () => {
+
+      const { data, error } = await supabase
+        .from("maintenance")
+        .select("*")
+        .order("id", { ascending: false });
+
+      if (error) {
+
+        console.log(error);
+
+      } else {
+
+        setHistoryData(data || []);
+
+      }
+
+    };
+
+    fetchData();
+
+  }, [router]);
+
   // Production Lines
   const lines = [
     "A01","A02","A03","A04",
@@ -28,13 +69,13 @@ export default function Home() {
 
   // Production Output Graph
   const productionData = [
-  { machine: "A01", error: 2 },
-  { machine: "A02", error: 5 },
-  { machine: "A03", error: 1 },
-  { machine: "A04", error: 7 },
-  { machine: "A05", error: 3 },
-  { machine: "A06", error: 4 },
-];
+    { machine: "A01", error: 2 },
+    { machine: "A02", error: 5 },
+    { machine: "A03", error: 1 },
+    { machine: "A04", error: 7 },
+    { machine: "A05", error: 3 },
+    { machine: "A06", error: 4 },
+  ];
 
   // Downtime Graph
   const downtimeData = [
@@ -46,33 +87,34 @@ export default function Home() {
   ];
 
   // Pie Chart Data
-  const statusData = 
-  [
-    
+  const statusData = [
     { name: "Running", value: 28 },
     { name: "Alarm", value: 3 },
     { name: "Idle", value: 11 },
   ];
+
+  // PM Schedule
   const maintenanceSchedule = [
-  {
-    machine: "A01",
-    lastPM: "2026-05-10",
-    nextPM: "2026-05-25",
-    status: "Due Soon",
-  },
-  {
-    machine: "A02",
-    lastPM: "2026-05-01",
-    nextPM: "2026-05-16",
-    status: "Overdue",
-  },
-  {
-    machine: "A03",
-    lastPM: "2026-05-15",
-    nextPM: "2026-05-30",
-    status: "Normal",
-  },
-];
+    {
+      machine: "A01",
+      lastPM: "2026-05-10",
+      nextPM: "2026-05-25",
+      status: "Due Soon",
+    },
+    {
+      machine: "A02",
+      lastPM: "2026-05-01",
+      nextPM: "2026-05-16",
+      status: "Overdue",
+    },
+    {
+      machine: "A03",
+      lastPM: "2026-05-15",
+      nextPM: "2026-05-30",
+      status: "Normal",
+    },
+  ];
+
   const COLORS = [
     "#22c55e",
     "#ef4444",
@@ -108,6 +150,19 @@ export default function Home() {
           <div className="bg-green-600 px-5 py-3 rounded-2xl shadow-lg">
             Running 28
           </div>
+
+          <button
+            onClick={() => {
+
+              localStorage.removeItem("login");
+
+              router.push("/login");
+
+            }}
+            className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl shadow-lg"
+          >
+            Logout
+          </button>
 
         </div>
 
@@ -166,87 +221,89 @@ export default function Home() {
         </div>
 
       </section>
-{/* ================= PM SCHEDULE ================= */}
 
-<section className="px-8 mt-8">
+      {/* ================= PM SCHEDULE ================= */}
 
-  <div className="bg-[#1e293b] rounded-2xl p-4 shadow-lg">
+      <section className="px-8 mt-8">
 
-    <div className="flex items-center justify-between mb-4">
+        <div className="bg-[#1e293b] rounded-2xl p-4 shadow-lg">
 
-      <h2 className="text-xl font-bold">
-        Maintenance Schedule (15 Days)
-      </h2>
+          <div className="flex items-center justify-between mb-4">
 
-      <div className="bg-cyan-600 px-3 py-2 rounded-xl text-sm">
-        PM Every 15 Days
-      </div>
+            <h2 className="text-xl font-bold">
+              Maintenance Schedule (15 Days)
+            </h2>
 
-    </div>
+            <div className="bg-cyan-600 px-3 py-2 rounded-xl text-sm">
+              PM Every 15 Days
+            </div>
 
-    <table className="w-full text-sm">
+          </div>
 
-      <thead className="text-left text-gray-400 border-b border-gray-700">
+          <table className="w-full text-sm">
 
-        <tr>
+            <thead className="text-left text-gray-400 border-b border-gray-700">
 
-          <th className="py-3">Machine</th>
-          <th>Last PM</th>
-          <th>Next PM</th>
-          <th>Status</th>
+              <tr>
 
-        </tr>
+                <th className="py-3">Machine</th>
+                <th>Last PM</th>
+                <th>Next PM</th>
+                <th>Status</th>
 
-      </thead>
+              </tr>
 
-      <tbody>
+            </thead>
 
-        {maintenanceSchedule.map((item, index) => (
+            <tbody>
 
-          <tr
-            key={index}
-            className="border-b border-gray-800"
-          >
+              {maintenanceSchedule.map((item, index) => (
 
-            <td className="py-3 font-semibold">
-              {item.machine}
-            </td>
+                <tr
+                  key={index}
+                  className="border-b border-gray-800"
+                >
 
-            <td>
-              {item.lastPM}
-            </td>
+                  <td className="py-3 font-semibold">
+                    {item.machine}
+                  </td>
 
-            <td>
-              {item.nextPM}
-            </td>
+                  <td>
+                    {item.lastPM}
+                  </td>
 
-            <td>
+                  <td>
+                    {item.nextPM}
+                  </td>
 
-              <span
-                className={
-                  item.status === "Overdue"
-                    ? "bg-red-600 px-3 py-1 rounded-full text-xs"
-                    : item.status === "Due Soon"
-                    ? "bg-yellow-500 px-3 py-1 rounded-full text-xs"
-                    : "bg-green-600 px-3 py-1 rounded-full text-xs"
-                }
-              >
-                {item.status}
-              </span>
+                  <td>
 
-            </td>
+                    <span
+                      className={
+                        item.status === "Overdue"
+                          ? "bg-red-600 px-3 py-1 rounded-full text-xs"
+                          : item.status === "Due Soon"
+                          ? "bg-yellow-500 px-3 py-1 rounded-full text-xs"
+                          : "bg-green-600 px-3 py-1 rounded-full text-xs"
+                      }
+                    >
+                      {item.status}
+                    </span>
 
-          </tr>
+                  </td>
 
-        ))}
+                </tr>
 
-      </tbody>
+              ))}
 
-    </table>
+            </tbody>
 
-  </div>
+          </table>
 
-</section>
+        </div>
+
+      </section>
+
       {/* ================= GRAPH SECTION ================= */}
 
       <section className="grid grid-cols-1 xl:grid-cols-3 gap-4 px-8">
@@ -290,7 +347,7 @@ export default function Home() {
 
         {/* PIE CHART */}
 
-        <div className="bg-[#1e293b] rounded-2xl p- shadow-lg">
+        <div className="bg-[#1e293b] rounded-2xl p-4 shadow-lg">
 
           <h2 className="text-2xl font-bold mb-6">
             Machine Status
@@ -362,7 +419,7 @@ export default function Home() {
                 <Bar
                   dataKey="time"
                   fill="#f59e0b"
-                  radius={[10,10,0,0]}
+                  radius={[10, 10, 0, 0]}
                 />
 
               </BarChart>
@@ -468,62 +525,48 @@ export default function Home() {
 
             <tbody>
 
-              <tr className="border-b border-gray-800">
+              {historyData.map((item: any, index) => (
 
-                <td className="py-4">26/05/2026</td>
-                <td>A01</td>
-                <td>Printer</td>
-                <td>Motor Alarm</td>
-                <td>John</td>
-                <td>35m</td>
+                <tr
+                  key={index}
+                  className="border-b border-gray-800"
+                >
 
-                <td>
+                  <td className="py-4">
+                    {item.date}
+                  </td>
 
-                  <span className="bg-green-600 px-3 py-1 rounded-full text-sm">
-                    Complete
-                  </span>
+                  <td>
+                    {item.line}
+                  </td>
 
-                </td>
+                  <td>
+                    {item.machine}
+                  </td>
 
-              </tr>
+                  <td>
+                    {item.problem}
+                  </td>
 
-              <tr className="border-b border-gray-800">
+                  <td>
+                    {item.technician}
+                  </td>
 
-                <td className="py-4">26/05/2026</td>
-                <td>A04</td>
-                <td>SPI</td>
-                <td>Camera Error</td>
-                <td>Mike</td>
-                <td>18m</td>
+                  <td>
+                    {item.downtime}
+                  </td>
 
-                <td>
+                  <td>
 
-                  <span className="bg-yellow-500 px-3 py-1 rounded-full text-sm">
-                    Waiting Part
-                  </span>
+                    <span className="bg-green-600 px-3 py-1 rounded-full text-sm">
+                      {item.status}
+                    </span>
 
-                </td>
+                  </td>
 
-              </tr>
+                </tr>
 
-              <tr>
-
-                <td className="py-4">26/05/2026</td>
-                <td>B10</td>
-                <td>Reflow</td>
-                <td>Temperature Alarm</td>
-                <td>Alex</td>
-                <td>52m</td>
-
-                <td>
-
-                  <span className="bg-red-600 px-3 py-1 rounded-full text-sm">
-                    Breakdown
-                  </span>
-
-                </td>
-
-              </tr>
+              ))}
 
             </tbody>
 
@@ -536,4 +579,5 @@ export default function Home() {
     </main>
 
   );
+
 }
