@@ -490,8 +490,8 @@ export default function Home() {
                   nameKey="machine"
                   outerRadius={120}
                   label={({ name, percent }) =>
-                    `${name} ${(percent * 100).toFixed(0)}%`
-                  }
+  `${name} ${((percent || 0) * 100).toFixed(0)}%`
+}
                 >
 
                   {errorSummary.map((entry: any, index) => (
