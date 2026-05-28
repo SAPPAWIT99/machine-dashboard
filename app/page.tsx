@@ -1,373 +1,500 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "./supabase";
 
 import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
   BarChart,
   Bar,
   PieChart,
   Pie,
   Cell,
   Legend,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
 } from "recharts";
 
 export default function Home() {
 
   const router = useRouter();
 
-  const [historyData, setHistoryData] = useState<any[]>([]);
+  // ================= LOGIN =================
 
   useEffect(() => {
 
     const login = localStorage.getItem("login");
 
     if (login !== "true") {
-
       router.push("/login");
-
     }
-
-    const fetchData = async () => {
-
-      const { data, error } = await supabase
-        .from("maintenance")
-        .select("*")
-        .order("id", { ascending: false });
-
-      if (error) {
-
-        console.log(error);
-
-      } else {
-
-        setHistoryData(data || []);
-
-      }
-
-    };
-
-    fetchData();
 
   }, [router]);
 
-  // Production Lines
-  const lines = [
-    "A01","A02","A03","A04",
-    "A05","A06","A07","A08",
-    "A09","A10","A11","A12",
-    "B07","B10"
-  ];
+  // ================= SELECT MACHINE =================
 
-  // Production Output Graph
-  const productionData = [
-    { machine: "A01", error: 2 },
-    { machine: "A02", error: 5 },
-    { machine: "A03", error: 1 },
-    { machine: "A04", error: 7 },
-    { machine: "A05", error: 3 },
-    { machine: "A06", error: 4 },
-  ];
+  const [selectedMachine, setSelectedMachine] =
+    useState<string | null>(null);
 
-  // Downtime Graph
-  const downtimeData = [
-    { machine: "Printer", time: 35 },
-    { machine: "SPI", time: 18 },
-    { machine: "Reflow", time: 52 },
-    { machine: "AOI", time: 20 },
-    { machine: "Loader", time: 12 },
-  ];
+  // ================= HISTORY DATA =================
 
-  // Pie Chart Data
-  const statusData = [
-    { name: "Running", value: 28 },
-    { name: "Alarm", value: 3 },
-    { name: "Idle", value: 11 },
-  ];
-
-  // PM Schedule
-  const maintenanceSchedule = [
+  const [historyData, setHistoryData] = useState<any[]>([
     {
-      machine: "A01",
-      lastPM: "2026-05-10",
-      nextPM: "2026-05-25",
-      status: "Due Soon",
+      date: "2026-05-20",
+      line: "A01",
+      machine: "Printer",
+      problem: "Nozzle clog",
+      technician: "Somchai",
+      status: "Done",
     },
     {
-      machine: "A02",
-      lastPM: "2026-05-01",
-      nextPM: "2026-05-16",
-      status: "Overdue",
+      date: "2026-05-21",
+      line: "A02",
+      machine: "SPI",
+      problem: "Camera calibration fail",
+      technician: "Kanya",
+      status: "Done",
     },
     {
-      machine: "A03",
-      lastPM: "2026-05-15",
-      nextPM: "2026-05-30",
-      status: "Normal",
+      date: "2026-05-22",
+      line: "A03",
+      machine: "Reflow",
+      problem: "Fan failure",
+      technician: "Anan",
+      status: "Done",
     },
-  ];
+    {
+      date: "2026-05-23",
+      line: "A04",
+      machine: "AOI",
+      problem: "Lens dirty",
+      technician: "Prasert",
+      status: "Done",
+    },
+    {
+      date: "2026-05-24",
+      line: "A05",
+      machine: "Loader",
+      problem: "Motor jam",
+      technician: "Kanya",
+      status: "Done",
+    },
+  ]);
+
+  // ================= PM LIST =================
+
+  const [pmList, setPmList] = useState([
+    {
+      line: "A01",
+      last: "2026-05-01",
+      next: "2026-06-01",
+    },
+    {
+      line: "A02",
+      last: "2026-05-03",
+      next: "2026-05-30",
+    },
+    {
+      line: "A03",
+      last: "2026-05-05",
+      next: "2026-05-28",
+    },
+    {
+      line: "A04",
+      last: "2026-05-10",
+      next: "2026-06-05",
+    },
+    {
+      line: "A05",
+      last: "2026-05-12",
+      next: "2026-06-08",
+    },
+  ]);
+
+  // ================= FORM DATA =================
+
+  const [formData, setFormData] = useState({
+    date: "",
+    line: "A01",
+  });
+
+  // ================= PM DATA =================
+
+  const pmData = pmList.map((m) => {
+
+    const today = new Date();
+
+    const next = new Date(m.next);
+
+    const remaining = Math.ceil(
+      (next.getTime() - today.getTime()) /
+      (1000 * 60 * 60 * 24)
+    );
+
+    return {
+      ...m,
+      remaining,
+    };
+
+  });
+
+  // ================= ERROR SUMMARY =================
+
+  const errorSummary = useMemo(() => {
+
+    return Object.values(
+
+      historyData.reduce((acc: any, item: any) => {
+
+        const key = item.machine;
+
+        if (!acc[key]) {
+
+          acc[key] = {
+            machine: key,
+            count: 0,
+            items: [],
+          };
+
+        }
+
+        acc[key].count += 1;
+
+        acc[key].items.push(item);
+
+        return acc;
+
+      }, {})
+
+    );
+
+  }, [historyData]);
+
+  // ================= DETAIL DATA =================
+
+  const detailData = selectedMachine
+    ? historyData.filter(
+        (d) => d.machine === selectedMachine
+      )
+    : [];
+
+  // ================= COLORS =================
 
   const COLORS = [
-    "#22c55e",
     "#ef4444",
+    "#f97316",
     "#eab308",
+    "#22c55e",
+    "#3b82f6",
+    "#a855f7",
   ];
+
+  // ================= SAVE PM RECORD =================
+
+  const savePMRecord = () => {
+
+    if (!formData.date) {
+
+      alert("Please select date");
+
+      return;
+
+    }
+
+    // ================= NEXT PM +15 DAYS =================
+
+    const currentDate = new Date(formData.date);
+
+    const nextPM = new Date(currentDate);
+
+    nextPM.setDate(nextPM.getDate() + 15);
+
+    const nextPMString =
+      nextPM.toISOString().split("T")[0];
+
+    // ================= UPDATE PM LIST =================
+
+    const updatedPM = pmList.map((item: any) => {
+
+      if (item.line === formData.line) {
+
+        return {
+
+          ...item,
+          last: formData.date,
+          next: nextPMString,
+
+        };
+
+      }
+
+      return item;
+
+    });
+
+    setPmList(updatedPM);
+
+    // ================= ADD HISTORY =================
+
+    const newRecord = {
+
+      date: formData.date,
+      line: formData.line,
+      machine: "FULL LINE PM",
+      problem: "Preventive Maintenance",
+      technician: "Maintenance Team",
+      status: "Done",
+
+    };
+
+    setHistoryData([
+      newRecord,
+      ...historyData,
+    ]);
+
+    // ================= RESET FORM =================
+
+    setFormData({
+      date: "",
+      line: "A01",
+    });
+
+  };
 
   return (
 
-    <main className="min-h-screen bg-[#0f172a] text-white">
+    <main className="min-h-screen bg-slate-950 text-white p-6">
 
-      {/* ================= TOPBAR ================= */}
+      {/* ================= HEADER ================= */}
 
-      <div className="flex items-center justify-between px-8 py-5 border-b border-gray-700">
+      <div className="flex justify-between items-center mb-8 border-b border-slate-700 pb-4">
 
         <div>
 
-          <h1 className="text-2xl font-bold">
-            MACHINE MAINTENANCE DASHBOARD
+          <h1 className="text-4xl font-bold">
+            SMT Maintenance Dashboard
           </h1>
 
-          <p className="text-gray-400 mt-1">
-            Factory Monitoring System
+          <p className="text-gray-400 mt-2">
+            Real-time SMT Factory Maintenance System
           </p>
 
         </div>
 
-        <div className="flex gap-4">
+        <button
+          onClick={() => {
 
-          <div className="bg-red-600 px-5 py-3 rounded-2xl shadow-lg">
-            Alarm 3
-          </div>
+            localStorage.removeItem("login");
 
-          <div className="bg-green-600 px-5 py-3 rounded-2xl shadow-lg">
-            Running 28
-          </div>
+            router.push("/login");
 
-          <button
-            onClick={() => {
-
-              localStorage.removeItem("login");
-
-              router.push("/login");
-
-            }}
-            className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl shadow-lg"
-          >
-            Logout
-          </button>
-
-        </div>
+          }}
+          className="bg-red-600 hover:bg-red-500 px-5 py-3 rounded-xl"
+        >
+          Logout
+        </button>
 
       </div>
 
-      {/* ================= SUMMARY ================= */}
+      {/* ================= MAINTENANCE SCHEDULE ================= */}
 
-      <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 p-8">
+      <section className="mb-8">
 
-        <div className="bg-[#1e293b] p-4 rounded-2xl shadow-lg">
+        <h2 className="text-2xl font-bold mb-5">
+          Maintenance Schedule
+        </h2>
 
-          <h2 className="text-gray-400">
-            Total Machines
-          </h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
 
-          <p className="text-3xl font-bold mt-4">
-            42
-          </p>
+          {pmData
+            .sort((a, b) => a.remaining - b.remaining)
+            .slice(0, 3)
+            .map((item, i) => (
 
-        </div>
+            <div
+              key={i}
+              className={
+                item.remaining <= 0
+                  ? "bg-red-600 p-5 rounded-2xl shadow-lg"
+                  : item.remaining <= 3
+                  ? "bg-yellow-500 p-5 rounded-2xl shadow-lg"
+                  : "bg-green-600 p-5 rounded-2xl shadow-lg"
+              }
+            >
 
-        <div className="bg-[#1e293b] p-4 rounded-2xl shadow-lg">
+              <h3 className="text-3xl font-bold">
+                LINE {item.line}
+              </h3>
 
-          <h2 className="text-gray-400">
-            Breakdown Today
-          </h2>
+              <div className="mt-4 space-y-2">
 
-          <p className="text-5xl font-bold mt-4 text-red-500">
-            5
-          </p>
+                <p>
+                  Last PM : {item.last}
+                </p>
 
-        </div>
+                <p>
+                  Next PM : {item.next}
+                </p>
 
-        <div className="bg-[#1e293b] p-4 rounded-2xl shadow-lg">
+              </div>
 
-          <h2 className="text-gray-400">
-            Downtime
-          </h2>
+              <p className="text-2xl font-bold mt-5">
 
-          <p className="text-5xl font-bold mt-4 text-yellow-400">
-            128m
-          </p>
+                {item.remaining <= 0
+                  ? `OVERDUE ${Math.abs(item.remaining)} DAYS`
+                  : `${item.remaining} DAYS LEFT`}
 
-        </div>
+              </p>
 
-        <div className="bg-[#1e293b] p-4 rounded-2xl shadow-lg">
-
-          <h2 className="text-gray-400">
-            MTTR
-          </h2>
-
-          <p className="text-5xl font-bold mt-4 text-cyan-400">
-            24m
-          </p>
-
-        </div>
-
-      </section>
-
-      {/* ================= PM SCHEDULE ================= */}
-
-      <section className="px-8 mt-8">
-
-        <div className="bg-[#1e293b] rounded-2xl p-4 shadow-lg">
-
-          <div className="flex items-center justify-between mb-4">
-
-            <h2 className="text-xl font-bold">
-              Maintenance Schedule (15 Days)
-            </h2>
-
-            <div className="bg-cyan-600 px-3 py-2 rounded-xl text-sm">
-              PM Every 15 Days
             </div>
 
-          </div>
-
-          <table className="w-full text-sm">
-
-            <thead className="text-left text-gray-400 border-b border-gray-700">
-
-              <tr>
-
-                <th className="py-3">Machine</th>
-                <th>Last PM</th>
-                <th>Next PM</th>
-                <th>Status</th>
-
-              </tr>
-
-            </thead>
-
-            <tbody>
-
-              {maintenanceSchedule.map((item, index) => (
-
-                <tr
-                  key={index}
-                  className="border-b border-gray-800"
-                >
-
-                  <td className="py-3 font-semibold">
-                    {item.machine}
-                  </td>
-
-                  <td>
-                    {item.lastPM}
-                  </td>
-
-                  <td>
-                    {item.nextPM}
-                  </td>
-
-                  <td>
-
-                    <span
-                      className={
-                        item.status === "Overdue"
-                          ? "bg-red-600 px-3 py-1 rounded-full text-xs"
-                          : item.status === "Due Soon"
-                          ? "bg-yellow-500 px-3 py-1 rounded-full text-xs"
-                          : "bg-green-600 px-3 py-1 rounded-full text-xs"
-                      }
-                    >
-                      {item.status}
-                    </span>
-
-                  </td>
-
-                </tr>
-
-              ))}
-
-            </tbody>
-
-          </table>
+          ))}
 
         </div>
 
       </section>
 
-      {/* ================= GRAPH SECTION ================= */}
+      {/* ================= ADD MAINTENANCE ================= */}
 
-      <section className="grid grid-cols-1 xl:grid-cols-3 gap-4 px-8">
+      <section className="bg-slate-900 border border-slate-700 p-6 rounded-2xl mb-8">
 
-        {/* LINE GRAPH */}
+        <div className="flex justify-between items-center mb-5">
 
-        <div className="bg-[#1e293b] rounded-2xl p-4 col-span-2 shadow-lg">
-
-          <h2 className="text-2xl font-bold mb-6">
-            Machine Error Monitoring
+          <h2 className="text-2xl font-bold">
+            Add Maintenance Record
           </h2>
 
-          <div style={{ width: "100%", height: 320 }}>
-
-            <ResponsiveContainer>
-
-              <LineChart data={productionData}>
-
-                <CartesianGrid strokeDasharray="3 3" />
-
-                <XAxis dataKey="machine" />
-
-                <YAxis />
-
-                <Tooltip />
-
-                <Line
-                  type="monotone"
-                  dataKey="error"
-                  stroke="#ef4444"
-                  strokeWidth={4}
-                />
-
-              </LineChart>
-
-            </ResponsiveContainer>
-
+          <div className="bg-cyan-600 px-4 py-2 rounded-xl text-sm">
+            PM RECORD INPUT
           </div>
 
         </div>
 
-        {/* PIE CHART */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
-        <div className="bg-[#1e293b] rounded-2xl p-4 shadow-lg">
+          {/* DATE */}
 
-          <h2 className="text-2xl font-bold mb-6">
-            Machine Status
-          </h2>
+          <input
+            type="date"
+            value={formData.date}
+            onChange={(e) =>
+              setFormData({
+                ...formData,
+                date: e.target.value,
+              })
+            }
+            className="bg-slate-800 border border-slate-600 p-3 rounded-xl"
+          />
 
-          <div style={{ width: "100%", height: 320 }}>
+          {/* LINE */}
+
+          <select
+            value={formData.line}
+            onChange={(e) =>
+              setFormData({
+                ...formData,
+                line: e.target.value,
+              })
+            }
+            className="bg-slate-800 border border-slate-600 p-3 rounded-xl"
+          >
+            <option>A01</option>
+            <option>A02</option>
+            <option>A03</option>
+            <option>A04</option>
+            <option>A05</option>
+            <option>A06</option>
+            <option>A07</option>
+            <option>A08</option>
+            <option>A09</option>
+            <option>A10</option>
+          </select>
+
+        </div>
+
+        {/* SAVE BUTTON */}
+
+        <button
+          onClick={savePMRecord}
+          className="mt-5 bg-green-600 hover:bg-green-500 px-6 py-3 rounded-xl font-bold"
+        >
+          SAVE PM RECORD
+        </button>
+
+      </section>
+
+      {/* ================= BAR CHART ================= */}
+
+      <section className="bg-slate-900 border border-slate-700 p-6 rounded-2xl mb-8">
+
+        <h2 className="text-2xl font-bold mb-5">
+          Machine Error Statistics
+        </h2>
+
+        <ResponsiveContainer width="100%" height={350}>
+
+          <BarChart data={errorSummary}>
+
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke="#334155"
+            />
+
+            <XAxis
+              dataKey="machine"
+              stroke="#94a3b8"
+            />
+
+            <YAxis stroke="#94a3b8" />
+
+            <Tooltip />
+
+            <Bar
+              dataKey="count"
+              fill="#ef4444"
+              radius={[10, 10, 0, 0]}
+              onClick={(data: any) => {
+                setSelectedMachine(data.machine);
+              }}
+            />
+
+          </BarChart>
+
+        </ResponsiveContainer>
+
+      </section>
+
+      {/* ================= PIE CHART ================= */}
+
+      <section className="bg-slate-900 border border-slate-700 p-6 rounded-2xl mb-8">
+
+        <h2 className="text-2xl font-bold mb-5">
+          Machine Error Distribution
+        </h2>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+
+          {/* PIE */}
+
+          <div style={{ width: "100%", height: 350 }}>
 
             <ResponsiveContainer>
 
               <PieChart>
 
                 <Pie
-                  data={statusData}
-                  dataKey="value"
-                  nameKey="name"
-                  outerRadius={100}
-                  label
+                  data={errorSummary}
+                  dataKey="count"
+                  nameKey="machine"
+                  outerRadius={120}
+                  label={({ name, percent }) =>
+                    `${name} ${(percent * 100).toFixed(0)}%`
+                  }
                 >
 
-                  {statusData.map((entry, index) => (
+                  {errorSummary.map((entry: any, index) => (
 
                     <Cell
                       key={index}
@@ -388,43 +515,49 @@ export default function Home() {
 
           </div>
 
-        </div>
+          {/* SUMMARY */}
 
-      </section>
+          <div className="space-y-3">
 
-      {/* ================= BAR GRAPH ================= */}
+            {errorSummary.map((item: any, index) => {
 
-      <section className="px-8 mt-6">
+              const total = errorSummary.reduce(
+                (sum: number, d: any) => sum + d.count,
+                0
+              );
 
-        <div className="bg-[#1e293b] rounded-2xl p-4 shadow-lg">
+              const percent = (
+                (item.count / total) * 100
+              ).toFixed(0);
 
-          <h2 className="text-2xl font-bold mb-6">
-            Downtime by Machine
-          </h2>
+              return (
 
-          <div style={{ width: "100%", height: 320 }}>
+                <div
+                  key={index}
+                  className="bg-slate-800 p-4 rounded-xl flex justify-between items-center"
+                >
 
-            <ResponsiveContainer>
+                  <div>
 
-              <BarChart data={downtimeData}>
+                    <p className="font-bold text-lg">
+                      {item.machine}
+                    </p>
 
-                <CartesianGrid strokeDasharray="3 3" />
+                    <p className="text-sm text-gray-400">
+                      Error Distribution
+                    </p>
 
-                <XAxis dataKey="machine" />
+                  </div>
 
-                <YAxis />
+                  <div className="text-3xl font-bold text-red-400">
+                    {percent}%
+                  </div>
 
-                <Tooltip />
+                </div>
 
-                <Bar
-                  dataKey="time"
-                  fill="#f59e0b"
-                  radius={[10, 10, 0, 0]}
-                />
+              );
 
-              </BarChart>
-
-            </ResponsiveContainer>
+            })}
 
           </div>
 
@@ -432,92 +565,54 @@ export default function Home() {
 
       </section>
 
-      {/* ================= LINE STATUS ================= */}
+      {/* ================= MACHINE DETAIL ================= */}
 
-      <section className="px-8 mt-8">
+      {selectedMachine && (
 
-        <h2 className="text-2xl font-bold mb-6">
-          Production Lines
-        </h2>
+        <section className="bg-slate-900 border border-slate-700 p-6 rounded-2xl mb-8">
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
-
-          {lines.map((line, index) => (
-
-            <div
-              key={index}
-              className="bg-[#1e293b] rounded-2xl p-5 border border-gray-700 hover:border-cyan-400 transition shadow-lg"
-            >
-
-              <div className="flex items-center justify-between">
-
-                <h3 className="text-3xl font-bold">
-                  {line}
-                </h3>
-
-                <div className="w-4 h-4 bg-green-500 rounded-full animate-pulse"></div>
-
-              </div>
-
-              <div className="mt-5 space-y-2 text-gray-300">
-
-                <p>
-                  Machines : 3
-                </p>
-
-                <p>
-                  Alarm : 0
-                </p>
-
-                <p>
-                  Downtime : 12m
-                </p>
-
-              </div>
-
-              <button className="mt-5 w-full bg-cyan-600 hover:bg-cyan-500 py-3 rounded-xl font-semibold">
-                View Detail
-              </button>
-
-            </div>
-
-          ))}
-
-        </div>
-
-      </section>
-
-      {/* ================= HISTORY TABLE ================= */}
-
-      <section className="p-8">
-
-        <div className="bg-[#1e293b] rounded-2xl p-4 shadow-lg">
-
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex justify-between items-center mb-5">
 
             <h2 className="text-2xl font-bold">
-              Maintenance History
+              Machine Detail : {selectedMachine}
             </h2>
 
-            <button className="bg-green-600 hover:bg-green-500 px-5 py-3 rounded-xl">
-              + Add Record
+            <button
+              onClick={() =>
+                setSelectedMachine(null)
+              }
+              className="bg-red-600 hover:bg-red-500 px-4 py-2 rounded-lg"
+            >
+              Close
             </button>
 
           </div>
 
-          <table className="w-full">
+          <table className="w-full text-sm">
 
-            <thead className="text-left text-gray-400 border-b border-gray-700">
+            <thead className="text-gray-400 border-b border-slate-700">
 
               <tr>
 
-                <th className="py-4">Date</th>
-                <th>Line</th>
-                <th>Machine</th>
-                <th>Problem</th>
-                <th>Technician</th>
-                <th>Downtime</th>
-                <th>Status</th>
+                <th className="py-3 text-left">
+                  Date
+                </th>
+
+                <th className="text-left">
+                  Line
+                </th>
+
+                <th className="text-left">
+                  Problem
+                </th>
+
+                <th className="text-left">
+                  Technician
+                </th>
+
+                <th className="text-left">
+                  Status
+                </th>
 
               </tr>
 
@@ -525,44 +620,24 @@ export default function Home() {
 
             <tbody>
 
-              {historyData.map((item: any, index) => (
+              {detailData.map((item, i) => (
 
                 <tr
-                  key={index}
-                  className="border-b border-gray-800"
+                  key={i}
+                  className="border-b border-slate-800"
                 >
 
-                  <td className="py-4">
+                  <td className="py-3">
                     {item.date}
                   </td>
 
-                  <td>
-                    {item.line}
-                  </td>
+                  <td>{item.line}</td>
 
-                  <td>
-                    {item.machine}
-                  </td>
+                  <td>{item.problem}</td>
 
-                  <td>
-                    {item.problem}
-                  </td>
+                  <td>{item.technician}</td>
 
-                  <td>
-                    {item.technician}
-                  </td>
-
-                  <td>
-                    {item.downtime}
-                  </td>
-
-                  <td>
-
-                    <span className="bg-green-600 px-3 py-1 rounded-full text-sm">
-                      {item.status}
-                    </span>
-
-                  </td>
+                  <td>{item.status}</td>
 
                 </tr>
 
@@ -572,12 +647,99 @@ export default function Home() {
 
           </table>
 
-        </div>
+        </section>
+
+      )}
+
+      {/* ================= HISTORY ================= */}
+
+      <section className="bg-slate-900 border border-slate-700 p-6 rounded-2xl">
+
+        <h2 className="text-2xl font-bold mb-5">
+          Maintenance History
+        </h2>
+
+        <table className="w-full text-sm">
+
+          <thead className="text-gray-400 border-b border-slate-700">
+
+            <tr>
+
+              <th className="py-3 text-left">
+                Date
+              </th>
+
+              <th className="text-left">
+                Line
+              </th>
+
+              <th className="text-left">
+                Machine
+              </th>
+
+              <th className="text-left">
+                Problem
+              </th>
+
+              <th className="text-left">
+                Technician
+              </th>
+
+              <th className="text-left">
+                Status
+              </th>
+
+            </tr>
+
+          </thead>
+
+          <tbody>
+
+            {historyData.map((item, i) => (
+
+              <tr
+                key={i}
+                className="border-b border-slate-800"
+              >
+
+                <td className="py-3">
+                  {item.date}
+                </td>
+
+                <td>{item.line}</td>
+
+                <td>{item.machine}</td>
+
+                <td>{item.problem}</td>
+
+                <td>{item.technician}</td>
+
+                <td>
+
+                  <span
+                    className={
+                      item.status === "Done"
+                        ? "bg-green-600 px-3 py-1 rounded-full text-xs"
+                        : item.status === "Repairing"
+                        ? "bg-yellow-500 px-3 py-1 rounded-full text-xs"
+                        : "bg-red-600 px-3 py-1 rounded-full text-xs"
+                    }
+                  >
+                    {item.status}
+                  </span>
+
+                </td>
+
+              </tr>
+
+            ))}
+
+          </tbody>
+
+        </table>
 
       </section>
 
     </main>
-
   );
-
 }
