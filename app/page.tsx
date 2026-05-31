@@ -507,8 +507,14 @@ export default function Home() {
     <main className="min-h-screen bg-[#08111f] text-slate-100">
       <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6 lg:px-8">
         <header className="mb-6 overflow-hidden rounded-[28px] border border-white/10 bg-slate-950 shadow-2xl shadow-cyan-950/30">
-          <div className="relative grid gap-8 bg-[radial-gradient(circle_at_top_left,rgba(20,184,166,0.26),transparent_34%),radial-gradient(circle_at_top_right,rgba(56,189,248,0.22),transparent_30%)] p-6 md:grid-cols-[1.3fr_0.7fr] md:p-8">
-            <div>
+          <div className="relative grid gap-8 p-6 md:grid-cols-[1.3fr_0.7fr] md:p-8">
+            <img
+              src="/images/smt-mounter-dashboard.png"
+              alt=""
+              className="absolute inset-0 h-full w-full object-cover opacity-50"
+            />
+            <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(2,6,23,0.96),rgba(2,6,23,0.78)_45%,rgba(2,6,23,0.42)),radial-gradient(circle_at_top_left,rgba(20,184,166,0.35),transparent_34%)]" />
+            <div className="relative z-10">
               <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-sm text-cyan-100">
                 <Sparkles className="h-4 w-4" />
                 SMT Factory Maintenance Command Center
@@ -573,7 +579,7 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="grid content-end gap-3 sm:grid-cols-2 md:grid-cols-1">
+            <div className="relative z-10 grid content-end gap-3 sm:grid-cols-2 md:grid-cols-1">
               <div className="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur">
                 <p className="text-sm text-slate-300">Total Downtime</p>
                 <p className="mt-1 text-3xl font-black text-white">{totalDowntime} min</p>
