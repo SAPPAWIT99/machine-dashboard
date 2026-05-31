@@ -29,6 +29,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { supabase } from "./supabase";
 
 type MaintenanceStatus = "Done" | "Repairing" | "Pending";
 
@@ -101,7 +102,7 @@ function priorityClass(priority: HistoryItem["priority"]) {
 export default function Home() {
   const router = useRouter();
   const [activeView, setActiveView] = useState<"dashboard" | "layout">("dashboard");
-  const [storageReady, setStorageReady] = useState(false);
+  const [isLoadingData, setIsLoadingData] = useState(true);
   const [selectedLine, setSelectedLine] = useState<string | null>(null);
   const [lineLayouts, setLineLayouts] = useState<LineLayout[]>(initialLineLayouts);
   const [historyData, setHistoryData] = useState<HistoryItem[]>(initialHistory);
@@ -135,39 +136,63 @@ export default function Home() {
   }, [router]);
 
   useEffect(() => {
-    const savedLayouts = localStorage.getItem("smt-line-layouts-v2");
-    const savedPmList = localStorage.getItem("smt-pm-list-v2");
-    const savedHistory = localStorage.getItem("smt-maintenance-history-v2");
+    const loadSupabaseData = async () => {
+      setIsLoadingData(true);
 
-    if (savedLayouts) {
-      setLineLayouts(JSON.parse(savedLayouts));
-    }
+      const [layoutsResult, pmResult, historyResult] = await Promise.all([
+        supabase.from("line_layouts").select("*").order("line", { ascending: true }),
+        supabase.from("pm_records").select("*").order("line", { ascending: true }),
+        supabase.from("maintenance_history").select("*").order("id", { ascending: false }),
+      ]);
 
-    if (savedPmList) {
-      setPmList(JSON.parse(savedPmList));
-    }
+      if (layoutsResult.error || pmResult.error || historyResult.error) {
+        console.error("Supabase load error", {
+          layouts: layoutsResult.error,
+          pm: pmResult.error,
+          history: historyResult.error,
+        });
+        alert("Cannot load Supabase data. Please check database tables and policies.");
+        setIsLoadingData(false);
+        return;
+      }
 
-    if (savedHistory) {
-      setHistoryData(JSON.parse(savedHistory));
-    }
+      setLineLayouts(
+        (layoutsResult.data || []).map((item: any) => ({
+          line: item.line,
+          lineName: item.line_name,
+          machines: item.machines || [],
+        })),
+      );
 
-    setStorageReady(true);
+      setPmList(
+        (pmResult.data || []).map((item: any) => ({
+          line: item.line,
+          equipmentSet: item.equipment_set,
+          last: item.last_pm_date || "",
+          next: item.next_pm_date || "",
+          owner: item.owner || "Maintenance Team",
+        })),
+      );
+
+      setHistoryData(
+        (historyResult.data || []).map((item: any) => ({
+          id: Number(item.id),
+          date: item.pm_date,
+          line: item.line,
+          equipmentSet: item.equipment_set,
+          problem: item.problem,
+          technician: item.technician,
+          status: item.status,
+          downtime: item.downtime,
+          priority: item.priority,
+        })),
+      );
+
+      setIsLoadingData(false);
+    };
+
+    loadSupabaseData();
   }, []);
-
-  useEffect(() => {
-    if (!storageReady) return;
-    localStorage.setItem("smt-line-layouts-v2", JSON.stringify(lineLayouts));
-  }, [lineLayouts, storageReady]);
-
-  useEffect(() => {
-    if (!storageReady) return;
-    localStorage.setItem("smt-pm-list-v2", JSON.stringify(pmList));
-  }, [pmList, storageReady]);
-
-  useEffect(() => {
-    if (!storageReady) return;
-    localStorage.setItem("smt-maintenance-history-v2", JSON.stringify(historyData));
-  }, [historyData, storageReady]);
 
   const activeLines = useMemo(() => lineLayouts.map((layout) => layout.line), [lineLayouts]);
 
@@ -306,7 +331,7 @@ export default function Home() {
     });
   };
 
-  const saveLineLayout = () => {
+  const saveLineLayout = async () => {
     const line = layoutForm.line.trim().toUpperCase();
     const lineName = layoutForm.lineName.trim() || `SMT Line ${line}`;
     const machines = layoutForm.machines.map((machine) => machine.trim()).filter(Boolean);
@@ -319,6 +344,32 @@ export default function Home() {
     }
 
     const equipmentSet = machinesToText(machines);
+
+    const { error: layoutError } = await supabase.from("line_layouts").upsert({
+      line,
+      line_name: lineName,
+      machines,
+    });
+
+    if (layoutError) {
+      console.error("Save line layout error", layoutError);
+      alert("Cannot save line layout to Supabase");
+      return;
+    }
+
+    const { error: pmError } = await supabase.from("pm_records").upsert({
+      line,
+      equipment_set: equipmentSet,
+      last_pm_date: lastPmDate || null,
+      next_pm_date: nextPmDate,
+      owner: "Maintenance Team",
+    });
+
+    if (pmError) {
+      console.error("Save PM record error", pmError);
+      alert("Cannot save PM date to Supabase");
+      return;
+    }
 
     setLineLayouts((current) => {
       const exists = current.some((item) => item.line === line);
@@ -376,7 +427,7 @@ export default function Home() {
     });
   };
 
-  const saveMaintenanceRecord = () => {
+  const saveMaintenanceRecord = async () => {
     if (!formData.line) {
       alert("Please add line layout first");
       return;
@@ -392,6 +443,38 @@ export default function Home() {
       ...formData,
       downtime: Number(formData.downtime) || 0,
     };
+
+    const { error: historyError } = await supabase.from("maintenance_history").insert({
+      id: newRecord.id,
+      pm_date: newRecord.date,
+      line: newRecord.line,
+      equipment_set: newRecord.equipmentSet,
+      problem: newRecord.problem,
+      technician: newRecord.technician,
+      status: newRecord.status,
+      downtime: newRecord.downtime,
+      priority: newRecord.priority,
+    });
+
+    if (historyError) {
+      console.error("Save maintenance history error", historyError);
+      alert("Cannot save maintenance record to Supabase");
+      return;
+    }
+
+    const { error: pmError } = await supabase.from("pm_records").upsert({
+      line: formData.line,
+      equipment_set: formData.equipmentSet,
+      last_pm_date: formData.date,
+      next_pm_date: addDays(formData.date, 15),
+      owner: formData.technician,
+    });
+
+    if (pmError) {
+      console.error("Update PM record error", pmError);
+      alert("Cannot update PM schedule in Supabase");
+      return;
+    }
 
     setHistoryData((current) => [newRecord, ...current]);
 
@@ -504,6 +587,12 @@ export default function Home() {
         </header>
 
         <section className={`${activeView === "dashboard" ? "mb-6 grid" : "hidden"} gap-4 sm:grid-cols-2 xl:grid-cols-4`}>
+          {isLoadingData && (
+            <div className="rounded-2xl border border-cyan-300/20 bg-cyan-400/10 p-5 text-sm font-semibold text-cyan-100 sm:col-span-2 xl:col-span-4">
+              Loading data from Supabase...
+            </div>
+          )}
+
           <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-5">
             <div className="flex items-center justify-between">
               <p className="text-sm text-slate-400">Completed Jobs</p>
