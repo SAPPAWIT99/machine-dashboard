@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import {
   Activity,
   AlertTriangle,
@@ -59,6 +60,38 @@ type LineLayout = {
   machines: string[];
 };
 
+type SupabaseLineLayoutRow = {
+  line: string;
+  line_name: string;
+  machines: string[] | null;
+};
+
+type SupabasePmRecordRow = {
+  line: string;
+  equipment_set: string;
+  last_pm_date: string | null;
+  next_pm_date: string | null;
+  owner: string | null;
+};
+
+type SupabaseHistoryRow = {
+  id: number | string;
+  pm_date: string;
+  line: string;
+  equipment_set: string;
+  problem: string;
+  technician: string;
+  status: MaintenanceStatus;
+  downtime: number;
+  priority: HistoryItem["priority"];
+};
+
+type LineSummaryItem = {
+  line: string;
+  count: number;
+  downtime: number;
+};
+
 const initialLineLayouts: LineLayout[] = [];
 const initialHistory: HistoryItem[] = [];
 const initialPmList: PmItem[] = [];
@@ -99,9 +132,18 @@ function priorityClass(priority: HistoryItem["priority"]) {
   return "bg-sky-500/15 text-sky-200";
 }
 
+function isLineSummaryItem(value: unknown): value is LineSummaryItem {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "line" in value &&
+    typeof (value as { line: unknown }).line === "string"
+  );
+}
+
 export default function Home() {
   const router = useRouter();
-  const [activeView, setActiveView] = useState<"dashboard" | "layout">("dashboard");
+  const [activeView, setActiveView] = useState<"dashboard" | "layout" | "record">("dashboard");
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [selectedLine, setSelectedLine] = useState<string | null>(null);
   const [lineLayouts, setLineLayouts] = useState<LineLayout[]>(initialLineLayouts);
@@ -156,26 +198,21 @@ export default function Home() {
         return;
       }
 
-      setLineLayouts(
-        (layoutsResult.data || []).map((item: any) => ({
+      const layouts = ((layoutsResult.data || []) as SupabaseLineLayoutRow[]).map((item) => ({
           line: item.line,
           lineName: item.line_name,
           machines: item.machines || [],
-        })),
-      );
+        }));
 
-      setPmList(
-        (pmResult.data || []).map((item: any) => ({
+      const pmRecords = ((pmResult.data || []) as SupabasePmRecordRow[]).map((item) => ({
           line: item.line,
           equipmentSet: item.equipment_set,
           last: item.last_pm_date || "",
           next: item.next_pm_date || "",
           owner: item.owner || "Maintenance Team",
-        })),
-      );
+        }));
 
-      setHistoryData(
-        (historyResult.data || []).map((item: any) => ({
+      const history = ((historyResult.data || []) as SupabaseHistoryRow[]).map((item) => ({
           id: Number(item.id),
           date: item.pm_date,
           line: item.line,
@@ -185,8 +222,22 @@ export default function Home() {
           status: item.status,
           downtime: item.downtime,
           priority: item.priority,
-        })),
-      );
+        }));
+
+      setLineLayouts(layouts);
+      setPmList(pmRecords);
+      setHistoryData(history);
+      setFormData((current) => {
+        if (current.line || !layouts[0]) {
+          return current;
+        }
+
+        return {
+          ...current,
+          line: layouts[0].line,
+          equipmentSet: machinesToText(layouts[0].machines),
+        };
+      });
 
       setIsLoadingData(false);
     };
@@ -196,20 +247,10 @@ export default function Home() {
 
   const activeLines = useMemo(() => lineLayouts.map((layout) => layout.line), [lineLayouts]);
 
-  const getEquipmentSet = (line: string) => {
+  const getEquipmentSet = useCallback((line: string) => {
     const layout = lineLayouts.find((item) => item.line === line);
     return layout ? machinesToText(layout.machines) : "";
-  };
-
-  useEffect(() => {
-    if (!formData.line && activeLines[0]) {
-      setFormData((current) => ({
-        ...current,
-        line: activeLines[0],
-        equipmentSet: getEquipmentSet(activeLines[0]),
-      }));
-    }
-  }, [activeLines, formData.line, lineLayouts]);
+  }, [lineLayouts]);
 
   const getPmRecord = (line: string) => pmList.find((item) => item.line === line);
 
@@ -222,7 +263,7 @@ export default function Home() {
           remaining: daysBetween(item.next),
         }))
         .sort((a, b) => a.remaining - b.remaining),
-    [pmList, lineLayouts],
+    [pmList, getEquipmentSet],
   );
 
   const lineSummary = useMemo(() => {
@@ -505,12 +546,14 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-[#08111f] text-slate-100">
-      <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6 lg:px-8">
+      <div className="w-full px-4 py-5 sm:px-6 lg:px-8 2xl:px-10">
         <header className="mb-6 overflow-hidden rounded-[28px] border border-white/10 bg-slate-950 shadow-2xl shadow-cyan-950/30">
           <div className="relative grid gap-8 p-6 md:grid-cols-[1.3fr_0.7fr] md:p-8">
-            <img
+            <Image
               src="/images/smt-mounter-dashboard.png"
               alt=""
+              fill
+              priority
               className="absolute inset-0 h-full w-full object-cover opacity-50"
             />
             <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(2,6,23,0.96),rgba(2,6,23,0.78)_45%,rgba(2,6,23,0.42)),radial-gradient(circle_at_top_left,rgba(20,184,166,0.35),transparent_34%)]" />
@@ -521,13 +564,19 @@ export default function Home() {
               </div>
 
               <h1 className="max-w-3xl text-4xl font-black tracking-tight text-white sm:text-5xl">
-                {activeView === "dashboard" ? "SMT Maintenance Dashboard" : "Line Layout Setup"}
+                {activeView === "dashboard"
+                  ? "SMT Maintenance Dashboard"
+                  : activeView === "layout"
+                    ? "Line Layout Setup"
+                    : "Add Maintenance Record"}
               </h1>
 
               <p className="mt-3 max-w-2xl text-base leading-7 text-slate-300">
                 {activeView === "dashboard"
-                  ? "Monitor preventive maintenance by SMT line, including Printer, SPI, Mounter, Reflow, and AOI in one full-line workflow."
-                  : "Set each line name and choose machine layout before linking it to PM records and dashboard charts."}
+                  ? "Monitor preventive maintenance reports by SMT line, including schedule status, downtime, charts, and maintenance history."
+                  : activeView === "layout"
+                    ? "Set each line name and choose machine layout before linking it to PM records and dashboard charts."
+                    : "Record completed maintenance work and update the next PM schedule for each SMT line."}
               </p>
 
               <div className="mt-6 flex flex-wrap gap-3">
@@ -556,11 +605,12 @@ export default function Home() {
                 </button>
 
                 <button
-                  onClick={() => {
-                    setActiveView("dashboard");
-                    setTimeout(() => document.getElementById("add-record")?.scrollIntoView({ behavior: "smooth" }), 0);
-                  }}
-                  className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-5 py-3 font-bold text-white transition hover:bg-white/10"
+                  onClick={() => setActiveView("record")}
+                  className={`inline-flex items-center gap-2 rounded-xl px-5 py-3 font-bold transition ${
+                    activeView === "record"
+                      ? "bg-emerald-400 text-slate-950 shadow-lg shadow-emerald-950/30 hover:bg-emerald-300"
+                      : "border border-white/10 bg-white/5 text-white hover:bg-white/10"
+                  }`}
                 >
                   <Wrench className="h-5 w-5" />
                   Add Record
@@ -859,7 +909,7 @@ export default function Home() {
           </div>
         </section>
 
-        <section id="add-record" className={`${activeView === "dashboard" ? "mb-6 block" : "hidden"} rounded-2xl border border-white/10 bg-slate-900/80 p-5`}>
+        <section className={`${activeView === "record" ? "mb-6 block" : "hidden"} rounded-2xl border border-white/10 bg-slate-900/80 p-5`}>
           <div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-center">
             <div>
               <h2 className="text-2xl font-black">Add Maintenance Record</h2>
@@ -970,7 +1020,11 @@ export default function Home() {
                     dataKey="count"
                     fill="#14b8a6"
                     radius={[10, 10, 0, 0]}
-                    onClick={(data: any) => setSelectedLine(data.line)}
+                    onClick={(data: unknown) => {
+                      if (isLineSummaryItem(data)) {
+                        setSelectedLine(data.line);
+                      }
+                    }}
                   />
                 </BarChart>
               </ResponsiveContainer>
