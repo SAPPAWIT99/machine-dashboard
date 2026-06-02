@@ -143,6 +143,7 @@ function isLineSummaryItem(value: unknown): value is LineSummaryItem {
 export default function Home() {
   const router = useRouter();
   const [activeView, setActiveView] = useState<"dashboard" | "layout" | "record">("dashboard");
+  const [isChartReady, setIsChartReady] = useState(false);
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [selectedLine, setSelectedLine] = useState<string | null>(null);
   const [lineLayouts, setLineLayouts] = useState<LineLayout[]>(initialLineLayouts);
@@ -176,6 +177,14 @@ export default function Home() {
       router.push("/login");
     }
   }, [router]);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      setIsChartReady(true);
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, []);
 
   useEffect(() => {
     const loadSupabaseData = async () => {
@@ -1082,24 +1091,28 @@ export default function Home() {
           <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-5">
             <h2 className="mb-5 text-2xl font-black">Line Maintenance Statistics</h2>
             <div className="h-[360px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={lineSummary}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                  <XAxis dataKey="line" stroke="#94a3b8" />
-                  <YAxis stroke="#94a3b8" />
-                  <Tooltip contentStyle={{ background: "#020617", border: "1px solid #1e293b", borderRadius: 12 }} />
-                  <Bar
-                    dataKey="count"
-                    fill="#14b8a6"
-                    radius={[10, 10, 0, 0]}
-                    onClick={(data: unknown) => {
-                      if (isLineSummaryItem(data)) {
-                        setSelectedLine(data.line);
-                      }
-                    }}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
+              {isChartReady ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={lineSummary}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                    <XAxis dataKey="line" stroke="#94a3b8" />
+                    <YAxis stroke="#94a3b8" />
+                    <Tooltip contentStyle={{ background: "#020617", border: "1px solid #1e293b", borderRadius: 12 }} />
+                    <Bar
+                      dataKey="count"
+                      fill="#14b8a6"
+                      radius={[10, 10, 0, 0]}
+                      onClick={(data: unknown) => {
+                        if (isLineSummaryItem(data)) {
+                          setSelectedLine(data.line);
+                        }
+                      }}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full rounded-2xl bg-slate-950/60" />
+              )}
             </div>
           </div>
 
@@ -1107,17 +1120,21 @@ export default function Home() {
             <h2 className="mb-5 text-2xl font-black">Line Work Distribution</h2>
             <div className="grid gap-4 lg:grid-cols-[1fr_0.9fr]">
               <div className="h-[320px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={lineSummary} dataKey="count" nameKey="line" innerRadius={58} outerRadius={112} paddingAngle={4}>
-                      {lineSummary.map((entry, index) => (
-                        <Cell key={entry.line} fill={chartColors[index % chartColors.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip contentStyle={{ background: "#020617", border: "1px solid #1e293b", borderRadius: 12 }} />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
+                {isChartReady ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={lineSummary} dataKey="count" nameKey="line" innerRadius={58} outerRadius={112} paddingAngle={4}>
+                        {lineSummary.map((entry, index) => (
+                          <Cell key={entry.line} fill={chartColors[index % chartColors.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip contentStyle={{ background: "#020617", border: "1px solid #1e293b", borderRadius: 12 }} />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full rounded-2xl bg-slate-950/60" />
+                )}
               </div>
 
               <div className="space-y-3">
