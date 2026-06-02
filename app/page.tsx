@@ -58,12 +58,13 @@ type LineLayout = {
   line: string;
   lineName: string;
   machines: string[];
+  machineSerials: Record<string, string>;
 };
 
 type SupabaseLineLayoutRow = {
   line: string;
   line_name: string;
-  machines: string[] | null;
+  machines: Array<string | { name?: unknown; serialNumber?: unknown; serial?: unknown; sn?: unknown }> | null;
 };
 
 type SupabasePmRecordRow = {
@@ -92,12 +93,76 @@ type LineSummaryItem = {
   downtime: number;
 };
 
+type MachineIssueItem = {
+  id: string;
+  date: string;
+  line: string;
+  machine: string;
+  problem: string;
+  technician: string;
+  status: MaintenanceStatus;
+  downtime: number;
+  priority: HistoryItem["priority"];
+};
+
+type SparePartItem = {
+  id: number;
+  partNo: string;
+  partName: string;
+  line: string;
+  machine: string;
+  qty: number;
+  minQty: number;
+  location: string;
+  supplier: string;
+  owner: string;
+  updatedDate: string;
+};
+
+const sparePartStorageKey = "machine-spare-parts-v1";
+
 const initialLineLayouts: LineLayout[] = [];
 const initialHistory: HistoryItem[] = [];
 const initialPmList: PmItem[] = [];
 
 const chartColors = ["#14b8a6", "#38bdf8", "#f97316", "#f43f5e", "#a78bfa", "#84cc16"];
 const machineOptions = ["Printer", "SPI", "Mounter", "Reflow", "AOI", "Loader", "Unloader", "Conveyor", "Buffer", "NG Buffer"];
+
+function normalizeMachines(
+  machines: SupabaseLineLayoutRow["machines"],
+): { names: string[]; serials: Record<string, string> } {
+  return (machines || []).reduce(
+    (acc, item) => {
+      if (typeof item === "string") {
+        const machine = item.trim();
+        if (machine) {
+          acc.names.push(machine);
+        }
+        return acc;
+      }
+
+      const name = typeof item.name === "string" ? item.name.trim() : "";
+      const serial =
+        typeof item.serialNumber === "string"
+          ? item.serialNumber.trim()
+          : typeof item.serial === "string"
+            ? item.serial.trim()
+            : typeof item.sn === "string"
+              ? item.sn.trim()
+              : "";
+
+      if (name) {
+        acc.names.push(name);
+        if (serial) {
+          acc.serials[name] = serial;
+        }
+      }
+
+      return acc;
+    },
+    { names: [] as string[], serials: {} as Record<string, string> },
+  );
+}
 
 function daysBetween(targetDate: string) {
   const today = new Date();
@@ -142,20 +207,44 @@ function isLineSummaryItem(value: unknown): value is LineSummaryItem {
 
 export default function Home() {
   const router = useRouter();
-  const [activeView, setActiveView] = useState<"dashboard" | "layout" | "record">("dashboard");
+  const [activeView, setActiveView] = useState<"dashboard" | "layout" | "record" | "machine" | "spare">("dashboard");
   const [isChartReady, setIsChartReady] = useState(false);
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [selectedLine, setSelectedLine] = useState<string | null>(null);
   const [lineLayouts, setLineLayouts] = useState<LineLayout[]>(initialLineLayouts);
   const [historyData, setHistoryData] = useState<HistoryItem[]>(initialHistory);
   const [pmList, setPmList] = useState<PmItem[]>(initialPmList);
+  const [spareParts, setSpareParts] = useState<SparePartItem[]>(() => {
+    if (typeof window === "undefined") {
+      return [];
+    }
+
+    try {
+      const saved = window.localStorage.getItem(sparePartStorageKey);
+      return saved ? (JSON.parse(saved) as SparePartItem[]) : [];
+    } catch {
+      return [];
+    }
+  });
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | MaintenanceStatus>("All");
+  const [machineQuery, setMachineQuery] = useState("");
+  const [machineStatusFilter, setMachineStatusFilter] = useState<"All" | MaintenanceStatus>("All");
+  const [spareQuery, setSpareQuery] = useState("");
+  const [spareLineFilter, setSpareLineFilter] = useState("All");
+  const [spareMachineFilter, setSpareMachineFilter] = useState("All");
+  const [spareStockFilter, setSpareStockFilter] = useState<"All" | "Low Stock" | "Out of Stock" | "In Stock">("All");
+  const [dashboardIssueLineFilter, setDashboardIssueLineFilter] = useState("All");
+  const [dashboardIssueMachineFilter, setDashboardIssueMachineFilter] = useState("All");
+  const [dashboardIssueDateFilter, setDashboardIssueDateFilter] = useState("");
+  const [dashboardIssueMonthFilter, setDashboardIssueMonthFilter] = useState("All");
+  const [dashboardIssueYearFilter, setDashboardIssueYearFilter] = useState("All");
   const [layoutForm, setLayoutForm] = useState({
     line: "",
     lineName: "",
     lastPmDate: "",
     machines: [] as string[],
+    machineSerials: {} as Record<string, string>,
     customMachine: "",
   });
   const [formData, setFormData] = useState({
@@ -168,6 +257,28 @@ export default function Home() {
     status: "Done" as MaintenanceStatus,
     downtime: 0,
     priority: "Medium" as HistoryItem["priority"],
+  });
+  const [machineIssueForm, setMachineIssueForm] = useState({
+    date: "",
+    line: "",
+    machine: "",
+    problem: "",
+    lineTechnician: "",
+    downtime: 0,
+    priority: "High" as HistoryItem["priority"],
+    status: "Repairing" as MaintenanceStatus,
+  });
+  const [sparePartForm, setSparePartForm] = useState({
+    partNo: "",
+    partName: "",
+    line: "",
+    machine: "",
+    qty: 0,
+    minQty: 1,
+    location: "",
+    supplier: "",
+    owner: "",
+    updatedDate: "",
   });
 
   useEffect(() => {
@@ -185,6 +296,10 @@ export default function Home() {
 
     return () => cancelAnimationFrame(frame);
   }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(sparePartStorageKey, JSON.stringify(spareParts));
+  }, [spareParts]);
 
   useEffect(() => {
     const loadSupabaseData = async () => {
@@ -207,11 +322,16 @@ export default function Home() {
         return;
       }
 
-      const layouts = ((layoutsResult.data || []) as SupabaseLineLayoutRow[]).map((item) => ({
+      const layouts = ((layoutsResult.data || []) as SupabaseLineLayoutRow[]).map((item) => {
+        const normalized = normalizeMachines(item.machines);
+
+        return {
           line: item.line,
           lineName: item.line_name,
-          machines: item.machines || [],
-        }));
+          machines: normalized.names,
+          machineSerials: normalized.serials,
+        };
+      });
 
       const pmRecords = ((pmResult.data || []) as SupabasePmRecordRow[]).map((item) => ({
           line: item.line,
@@ -248,6 +368,28 @@ export default function Home() {
           workItems: [],
         };
       });
+      setMachineIssueForm((current) => {
+        if (current.line || !layouts[0]) {
+          return current;
+        }
+
+        return {
+          ...current,
+          line: layouts[0].line,
+          machine: layouts[0].machines[0] || "",
+        };
+      });
+      setSparePartForm((current) => {
+        if (current.line || !layouts[0]) {
+          return current;
+        }
+
+        return {
+          ...current,
+          line: layouts[0].line,
+          machine: layouts[0].machines[0] || "",
+        };
+      });
 
       setIsLoadingData(false);
     };
@@ -259,6 +401,14 @@ export default function Home() {
   const activeLineMachines = useMemo(
     () => lineLayouts.find((layout) => layout.line === formData.line)?.machines || [],
     [formData.line, lineLayouts],
+  );
+  const activeIssueLineMachines = useMemo(
+    () => lineLayouts.find((layout) => layout.line === machineIssueForm.line)?.machines || [],
+    [machineIssueForm.line, lineLayouts],
+  );
+  const activeSpareLineMachines = useMemo(
+    () => lineLayouts.find((layout) => layout.line === sparePartForm.line)?.machines || [],
+    [sparePartForm.line, lineLayouts],
   );
 
   const getEquipmentSet = useCallback((line: string) => {
@@ -326,11 +476,206 @@ export default function Home() {
     });
   }, [historyData, query, statusFilter]);
 
+  const machineIssueRows = useMemo<MachineIssueItem[]>(() => {
+    const issueKeywords = ["fail", "error", "alarm", "repair", "ng", "abnormal", "break", "down", "เสีย"];
+    const machineNames = Array.from(new Set(lineLayouts.flatMap((layout) => layout.machines)))
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length);
+
+    return historyData.flatMap((item) => {
+      const problemText = item.problem.toLowerCase();
+      const hasIssueKeyword = issueKeywords.some((keyword) => problemText.includes(keyword));
+      const isIssue = item.status !== "Done" || item.priority === "High" || item.downtime > 0 || hasIssueKeyword;
+
+      if (!isIssue) {
+        return [];
+      }
+
+      const matchedMachines = machineNames.filter((machine) => problemText.includes(machine.toLowerCase()));
+      const machines = matchedMachines.length > 0 ? matchedMachines : ["Line issue"];
+
+      return machines.map((machine) => ({
+        id: `${item.id}-${machine}`,
+        date: item.date,
+        line: item.line,
+        machine,
+        problem: item.problem,
+        technician: item.technician,
+        status: item.status,
+        downtime: item.downtime,
+        priority: item.priority,
+      }));
+    });
+  }, [historyData, lineLayouts]);
+
+  const filteredMachineIssues = useMemo(() => {
+    const normalizedQuery = machineQuery.trim().toLowerCase();
+
+    return machineIssueRows.filter((item) => {
+      const matchesStatus = machineStatusFilter === "All" || item.status === machineStatusFilter;
+      const matchesQuery =
+        !normalizedQuery ||
+        [item.date, item.line, item.machine, item.problem, item.technician, item.priority]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedQuery);
+
+      return matchesStatus && matchesQuery;
+    });
+  }, [machineIssueRows, machineQuery, machineStatusFilter]);
+
+  const machineIssueSummary = useMemo(() => {
+    const grouped = machineIssueRows.reduce<Record<string, { machine: string; count: number; downtime: number; latest: string }>>(
+      (acc, item) => {
+        if (!acc[item.machine]) {
+          acc[item.machine] = {
+            machine: item.machine,
+            count: 0,
+            downtime: 0,
+            latest: item.date,
+          };
+        }
+
+        acc[item.machine].count += 1;
+        acc[item.machine].downtime += item.downtime;
+        if (item.date > acc[item.machine].latest) {
+          acc[item.machine].latest = item.date;
+        }
+
+        return acc;
+      },
+      {},
+    );
+
+    return Object.values(grouped).sort((a, b) => b.count - a.count || b.downtime - a.downtime);
+  }, [machineIssueRows]);
+
+  const dashboardIssueMachineOptions = useMemo(() => {
+    const machines = machineIssueRows
+      .filter((item) => dashboardIssueLineFilter === "All" || item.line === dashboardIssueLineFilter)
+      .map((item) => item.machine);
+
+    return Array.from(new Set(machines)).sort((a, b) => a.localeCompare(b));
+  }, [dashboardIssueLineFilter, machineIssueRows]);
+
+  const dashboardIssueYearOptions = useMemo(() => {
+    const years = machineIssueRows
+      .map((item) => item.date.slice(0, 4))
+      .filter(Boolean);
+
+    return Array.from(new Set(years)).sort((a, b) => b.localeCompare(a));
+  }, [machineIssueRows]);
+
+  const dashboardFilteredMachineIssues = useMemo(() => {
+    return machineIssueRows.filter((item) => {
+      const [year, month] = item.date.split("-");
+      const matchesLine = dashboardIssueLineFilter === "All" || item.line === dashboardIssueLineFilter;
+      const matchesMachine = dashboardIssueMachineFilter === "All" || item.machine === dashboardIssueMachineFilter;
+      const matchesDate = !dashboardIssueDateFilter || item.date === dashboardIssueDateFilter;
+      const matchesMonth = dashboardIssueMonthFilter === "All" || month === dashboardIssueMonthFilter;
+      const matchesYear = dashboardIssueYearFilter === "All" || year === dashboardIssueYearFilter;
+
+      return matchesLine && matchesMachine && matchesDate && matchesMonth && matchesYear;
+    });
+  }, [
+    dashboardIssueDateFilter,
+    dashboardIssueLineFilter,
+    dashboardIssueMachineFilter,
+    dashboardIssueMonthFilter,
+    dashboardIssueYearFilter,
+    machineIssueRows,
+  ]);
+
+  const dashboardIssueByMachine = useMemo(() => {
+    const grouped = dashboardFilteredMachineIssues.reduce<Record<string, { machine: string; count: number; downtime: number }>>(
+      (acc, item) => {
+        if (!acc[item.machine]) {
+          acc[item.machine] = {
+            machine: item.machine,
+            count: 0,
+            downtime: 0,
+          };
+        }
+
+        acc[item.machine].count += 1;
+        acc[item.machine].downtime += item.downtime;
+        return acc;
+      },
+      {},
+    );
+
+    return Object.values(grouped).sort((a, b) => b.count - a.count || b.downtime - a.downtime);
+  }, [dashboardFilteredMachineIssues]);
+
+  const dashboardIssueByLine = useMemo(() => {
+    const grouped = dashboardFilteredMachineIssues.reduce<Record<string, { line: string; count: number; downtime: number }>>(
+      (acc, item) => {
+        if (!acc[item.line]) {
+          acc[item.line] = {
+            line: item.line,
+            count: 0,
+            downtime: 0,
+          };
+        }
+
+        acc[item.line].count += 1;
+        acc[item.line].downtime += item.downtime;
+        return acc;
+      },
+      {},
+    );
+
+    return Object.values(grouped).sort((a, b) => b.count - a.count || b.downtime - a.downtime);
+  }, [dashboardFilteredMachineIssues]);
+
   const detailData = selectedLine ? historyData.filter((item) => item.line === selectedLine) : [];
   const totalDowntime = historyData.reduce((sum, item) => sum + item.downtime, 0);
   const completedCount = historyData.filter((item) => item.status === "Done").length;
   const urgentPmCount = pmData.filter((item) => item.remaining <= 3).length;
   const openJobs = historyData.filter((item) => item.status !== "Done").length;
+  const machineIssueDowntime = machineIssueRows.reduce((sum, item) => sum + item.downtime, 0);
+  const topIssueMachine = machineIssueSummary[0]?.machine || "No issue";
+  const dashboardIssueDowntime = dashboardFilteredMachineIssues.reduce((sum, item) => sum + item.downtime, 0);
+  const dashboardOpenIssueCount = dashboardFilteredMachineIssues.filter((item) => item.status !== "Done").length;
+  const dashboardTopIssueMachine = dashboardIssueByMachine[0]?.machine || "No issue";
+
+  const getSpareStockStatus = (item: SparePartItem) => {
+    if (item.qty <= 0) return "Out of Stock";
+    if (item.qty <= item.minQty) return "Low Stock";
+    return "In Stock";
+  };
+
+  const spareMachineOptions = useMemo(() => {
+    const machines = spareParts
+      .filter((item) => spareLineFilter === "All" || item.line === spareLineFilter)
+      .map((item) => item.machine);
+
+    return Array.from(new Set(machines)).sort((a, b) => a.localeCompare(b));
+  }, [spareLineFilter, spareParts]);
+
+  const filteredSpareParts = useMemo(() => {
+    const normalizedQuery = spareQuery.trim().toLowerCase();
+
+    return spareParts.filter((item) => {
+      const status = getSpareStockStatus(item);
+      const matchesLine = spareLineFilter === "All" || item.line === spareLineFilter;
+      const matchesMachine = spareMachineFilter === "All" || item.machine === spareMachineFilter;
+      const matchesStock = spareStockFilter === "All" || status === spareStockFilter;
+      const matchesQuery =
+        !normalizedQuery ||
+        [item.partNo, item.partName, item.line, item.machine, item.location, item.supplier, item.owner]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedQuery);
+
+      return matchesLine && matchesMachine && matchesStock && matchesQuery;
+    });
+  }, [spareLineFilter, spareMachineFilter, spareParts, spareQuery, spareStockFilter]);
+
+  const totalSpareQty = spareParts.reduce((sum, item) => sum + item.qty, 0);
+  const lowStockCount = spareParts.filter((item) => getSpareStockStatus(item) === "Low Stock").length;
+  const outOfStockCount = spareParts.filter((item) => getSpareStockStatus(item) === "Out of Stock").length;
+  const spareMachinesTracked = new Set(spareParts.map((item) => `${item.line}-${item.machine}`)).size;
 
   const toggleWorkItem = (machine: string) => {
     setFormData((current) => ({
@@ -360,9 +705,14 @@ export default function Home() {
 
     if (trimmedMachine === "Mounter") {
       const nextMounterNumber = layoutForm.machines.filter((item) => item.startsWith("Mounter")).length + 1;
+      const nextMachine = `Mounter ${nextMounterNumber}`;
       setLayoutForm({
         ...layoutForm,
-        machines: [...layoutForm.machines, `Mounter ${nextMounterNumber}`],
+        machines: [...layoutForm.machines, nextMachine],
+        machineSerials: {
+          ...layoutForm.machineSerials,
+          [nextMachine]: "",
+        },
       });
       return;
     }
@@ -370,14 +720,23 @@ export default function Home() {
     setLayoutForm({
       ...layoutForm,
       machines: [...layoutForm.machines, trimmedMachine],
+      machineSerials: {
+        ...layoutForm.machineSerials,
+        [trimmedMachine]: layoutForm.machineSerials[trimmedMachine] || "",
+      },
       customMachine: "",
     });
   };
 
   const removeLayoutMachine = (index: number) => {
+    const machine = layoutForm.machines[index];
+    const nextSerials = { ...layoutForm.machineSerials };
+    delete nextSerials[machine];
+
     setLayoutForm({
       ...layoutForm,
       machines: layoutForm.machines.filter((_, itemIndex) => itemIndex !== index),
+      machineSerials: nextSerials,
     });
   };
 
@@ -395,10 +754,27 @@ export default function Home() {
     });
   };
 
+  const updateLayoutMachineSerial = (machine: string, serialNumber: string) => {
+    setLayoutForm({
+      ...layoutForm,
+      machineSerials: {
+        ...layoutForm.machineSerials,
+        [machine]: serialNumber,
+      },
+    });
+  };
+
   const saveLineLayout = async () => {
     const line = layoutForm.line.trim().toUpperCase();
     const lineName = layoutForm.lineName.trim() || `SMT Line ${line}`;
     const machines = layoutForm.machines.map((machine) => machine.trim()).filter(Boolean);
+    const machineSerials = machines.reduce<Record<string, string>>((acc, machine) => {
+      const serial = (layoutForm.machineSerials[machine] || "").trim();
+      if (serial) {
+        acc[machine] = serial;
+      }
+      return acc;
+    }, {});
     const lastPmDate = layoutForm.lastPmDate;
     const nextPmDate = lastPmDate ? addDays(lastPmDate, 15) : addDays(new Date().toISOString().split("T")[0], 15);
 
@@ -412,7 +788,10 @@ export default function Home() {
     const { error: layoutError } = await supabase.from("line_layouts").upsert({
       line,
       line_name: lineName,
-      machines,
+      machines: machines.map((machine) => ({
+        name: machine,
+        serialNumber: machineSerials[machine] || "",
+      })),
     });
 
     if (layoutError) {
@@ -437,7 +816,7 @@ export default function Home() {
 
     setLineLayouts((current) => {
       const exists = current.some((item) => item.line === line);
-      const nextLayout = { line, lineName, machines };
+      const nextLayout = { line, lineName, machines, machineSerials };
 
       return exists
         ? current.map((item) => (item.line === line ? nextLayout : item))
@@ -488,6 +867,7 @@ export default function Home() {
       lineName: "",
       lastPmDate: "",
       machines: [],
+      machineSerials: {},
       customMachine: "",
     });
   };
@@ -590,6 +970,157 @@ export default function Home() {
     });
   };
 
+  const saveMachineIssueRecord = async () => {
+    const line = machineIssueForm.line;
+    const machine = machineIssueForm.machine.trim();
+    const problem = machineIssueForm.problem.trim();
+    const lineTechnician = machineIssueForm.lineTechnician.trim();
+
+    if (!line) {
+      alert("Please add line layout first");
+      return;
+    }
+
+    if (!machineIssueForm.date) {
+      alert("Please select issue date");
+      return;
+    }
+
+    if (!machine) {
+      alert("Please select machine");
+      return;
+    }
+
+    if (!problem) {
+      alert("Please enter machine issue detail");
+      return;
+    }
+
+    if (!lineTechnician) {
+      alert("Please enter line technician name");
+      return;
+    }
+
+    const equipmentSet = getEquipmentSet(line);
+    const problemDetail = `Machine Issue: ${machine} | Detail: ${problem}`;
+    const newRecord: HistoryItem = {
+      id: Date.now(),
+      date: machineIssueForm.date,
+      line,
+      equipmentSet,
+      problem: problemDetail,
+      technician: lineTechnician,
+      status: machineIssueForm.status,
+      downtime: Number(machineIssueForm.downtime) || 0,
+      priority: machineIssueForm.priority,
+    };
+
+    const { error: historyError } = await supabase.from("maintenance_history").insert({
+      id: newRecord.id,
+      pm_date: newRecord.date,
+      line: newRecord.line,
+      equipment_set: newRecord.equipmentSet,
+      problem: newRecord.problem,
+      technician: newRecord.technician,
+      status: newRecord.status,
+      downtime: newRecord.downtime,
+      priority: newRecord.priority,
+    });
+
+    if (historyError) {
+      console.error("Save machine issue history error", historyError);
+      alert("Cannot save machine issue record to Supabase");
+      return;
+    }
+
+    setHistoryData((current) => [newRecord, ...current]);
+    setMachineIssueForm({
+      date: "",
+      line: activeLines[0] || "",
+      machine: activeLines[0] ? lineLayouts.find((layout) => layout.line === activeLines[0])?.machines[0] || "" : "",
+      problem: "",
+      lineTechnician: "",
+      downtime: 0,
+      priority: "High",
+      status: "Repairing",
+    });
+  };
+
+  const saveSparePart = () => {
+    const partNo = sparePartForm.partNo.trim();
+    const partName = sparePartForm.partName.trim();
+    const line = sparePartForm.line;
+    const machine = sparePartForm.machine;
+    const owner = sparePartForm.owner.trim();
+    const updatedDate = sparePartForm.updatedDate || new Date().toISOString().split("T")[0];
+
+    if (!partNo) {
+      alert("Please enter part number");
+      return;
+    }
+
+    if (!partName) {
+      alert("Please enter spare part name");
+      return;
+    }
+
+    if (!line || !machine) {
+      alert("Please select line and machine");
+      return;
+    }
+
+    if (!owner) {
+      alert("Please enter owner / line technician name");
+      return;
+    }
+
+    const nextPart: SparePartItem = {
+      id: Date.now(),
+      partNo,
+      partName,
+      line,
+      machine,
+      qty: Number(sparePartForm.qty) || 0,
+      minQty: Number(sparePartForm.minQty) || 0,
+      location: sparePartForm.location.trim(),
+      supplier: sparePartForm.supplier.trim(),
+      owner,
+      updatedDate,
+    };
+
+    setSpareParts((current) => [nextPart, ...current]);
+    setSparePartForm({
+      partNo: "",
+      partName: "",
+      line: activeLines[0] || "",
+      machine: activeLines[0] ? lineLayouts.find((layout) => layout.line === activeLines[0])?.machines[0] || "" : "",
+      qty: 0,
+      minQty: 1,
+      location: "",
+      supplier: "",
+      owner: "",
+      updatedDate: "",
+    });
+  };
+
+  const updateSparePartQty = (id: number, amount: number) => {
+    setSpareParts((current) =>
+      current.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              qty: Math.max(0, item.qty + amount),
+              updatedDate: new Date().toISOString().split("T")[0],
+            }
+          : item,
+      ),
+    );
+  };
+
+  const deleteSparePart = (id: number) => {
+    setSpareParts((current) => current.filter((item) => item.id !== id));
+  };
+
   return (
     <main className="min-h-screen bg-[#08111f] text-slate-100">
       <div className="w-full px-4 py-5 sm:px-6 lg:px-8 2xl:px-10">
@@ -624,7 +1155,11 @@ export default function Home() {
                   ? "SMT Maintenance Dashboard"
                   : activeView === "layout"
                     ? "Line Layout Setup"
-                    : "Add Maintenance Record"}
+                    : activeView === "record"
+                      ? "Add Maintenance Record"
+                      : activeView === "machine"
+                        ? "Machine Issue History"
+                        : "Machine Spare Part"}
               </h1>
 
               <p className="mt-3 max-w-2xl text-base leading-7 text-slate-300">
@@ -632,7 +1167,11 @@ export default function Home() {
                   ? "Monitor preventive maintenance reports by SMT line, including schedule status, downtime, charts, and maintenance history."
                   : activeView === "layout"
                     ? "Set each line name and choose machine layout before linking it to PM records and dashboard charts."
-                    : "Record completed maintenance work and update the next PM schedule for each SMT line."}
+                    : activeView === "record"
+                      ? "Record completed maintenance work and update the next PM schedule for each SMT line."
+                      : activeView === "machine"
+                        ? "Review machine issue records by line, machine name, status, downtime, and technician response."
+                        : "Manage spare part stock by line, machine, part number, location, supplier, and responsible technician."}
               </p>
 
               <div className="mt-6 flex flex-wrap gap-3">
@@ -670,6 +1209,30 @@ export default function Home() {
                 >
                   <Wrench className="h-5 w-5" />
                   Add Record
+                </button>
+
+                <button
+                  onClick={() => setActiveView("machine")}
+                  className={`inline-flex items-center gap-2 rounded-xl px-5 py-3 font-bold transition ${
+                    activeView === "machine"
+                      ? "bg-rose-400 text-slate-950 shadow-lg shadow-rose-950/30 hover:bg-rose-300"
+                      : "border border-white/10 bg-white/5 text-white hover:bg-white/10"
+                  }`}
+                >
+                  <AlertTriangle className="h-5 w-5" />
+                  Machine History
+                </button>
+
+                <button
+                  onClick={() => setActiveView("spare")}
+                  className={`inline-flex items-center gap-2 rounded-xl px-5 py-3 font-bold transition ${
+                    activeView === "spare"
+                      ? "bg-violet-400 text-slate-950 shadow-lg shadow-violet-950/30 hover:bg-violet-300"
+                      : "border border-white/10 bg-white/5 text-white hover:bg-white/10"
+                  }`}
+                >
+                  <Wrench className="h-5 w-5" />
+                  Spare Part
                 </button>
 
               </div>
@@ -725,6 +1288,168 @@ export default function Home() {
               <CalendarClock className="h-5 w-5 text-rose-300" />
             </div>
             <p className="mt-3 text-3xl font-black">{pmData[0] ? `${pmData[0].remaining} days` : "-"}</p>
+          </div>
+        </section>
+
+        <section className={`${activeView === "dashboard" ? "mb-6 block" : "hidden"} rounded-2xl border border-white/10 bg-slate-900/80 p-5`}>
+          <div className="mb-5 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+            <div>
+              <h2 className="text-2xl font-black">Machine Issue Statistics</h2>
+              <p className="mt-1 text-sm text-slate-400">Filter machine issue records by line, machine, day, month, and year.</p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Line</span>
+                <select
+                  value={dashboardIssueLineFilter}
+                  onChange={(event) => {
+                    setDashboardIssueLineFilter(event.target.value);
+                    setDashboardIssueMachineFilter("All");
+                  }}
+                  className="w-full rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+                >
+                  <option>All</option>
+                  {activeLines.map((line) => (
+                    <option key={line}>{line}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Machine</span>
+                <select
+                  value={dashboardIssueMachineFilter}
+                  onChange={(event) => setDashboardIssueMachineFilter(event.target.value)}
+                  className="w-full rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+                >
+                  <option>All</option>
+                  {dashboardIssueMachineOptions.map((machine) => (
+                    <option key={machine}>{machine}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Day</span>
+                <input
+                  type="date"
+                  value={dashboardIssueDateFilter}
+                  onChange={(event) => setDashboardIssueDateFilter(event.target.value)}
+                  className="w-full rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Month</span>
+                <select
+                  value={dashboardIssueMonthFilter}
+                  onChange={(event) => setDashboardIssueMonthFilter(event.target.value)}
+                  className="w-full rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+                >
+                  <option value="All">All</option>
+                  <option value="01">Jan</option>
+                  <option value="02">Feb</option>
+                  <option value="03">Mar</option>
+                  <option value="04">Apr</option>
+                  <option value="05">May</option>
+                  <option value="06">Jun</option>
+                  <option value="07">Jul</option>
+                  <option value="08">Aug</option>
+                  <option value="09">Sep</option>
+                  <option value="10">Oct</option>
+                  <option value="11">Nov</option>
+                  <option value="12">Dec</option>
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Year</span>
+                <select
+                  value={dashboardIssueYearFilter}
+                  onChange={(event) => setDashboardIssueYearFilter(event.target.value)}
+                  className="w-full rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+                >
+                  <option>All</option>
+                  {dashboardIssueYearOptions.map((year) => (
+                    <option key={year}>{year}</option>
+                  ))}
+                </select>
+              </label>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setDashboardIssueLineFilter("All");
+                  setDashboardIssueMachineFilter("All");
+                  setDashboardIssueDateFilter("");
+                  setDashboardIssueMonthFilter("All");
+                  setDashboardIssueYearFilter("All");
+                }}
+                className="self-end rounded-xl border border-white/10 bg-white/5 px-4 py-3 font-bold text-white transition hover:bg-white/10"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+
+          <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-2xl border border-white/10 bg-slate-950 p-5">
+              <p className="text-sm text-slate-400">Filtered Issues</p>
+              <p className="mt-3 text-3xl font-black">{dashboardFilteredMachineIssues.length}</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-slate-950 p-5">
+              <p className="text-sm text-slate-400">Open Issues</p>
+              <p className="mt-3 text-3xl font-black">{dashboardOpenIssueCount}</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-slate-950 p-5">
+              <p className="text-sm text-slate-400">Issue Downtime</p>
+              <p className="mt-3 text-3xl font-black">{dashboardIssueDowntime} min</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-slate-950 p-5">
+              <p className="text-sm text-slate-400">Top Issue Machine</p>
+              <p className="mt-3 text-3xl font-black">{dashboardTopIssueMachine}</p>
+            </div>
+          </div>
+
+          <div className="grid gap-6 xl:grid-cols-2">
+            <div className="rounded-2xl border border-white/10 bg-slate-950 p-5">
+              <h3 className="mb-4 text-xl font-black">Issues by Machine</h3>
+              <div className="h-[320px]">
+                {isChartReady ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={dashboardIssueByMachine.slice(0, 10)}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                      <XAxis dataKey="machine" stroke="#94a3b8" />
+                      <YAxis stroke="#94a3b8" />
+                      <Tooltip contentStyle={{ background: "#020617", border: "1px solid #1e293b", borderRadius: 12 }} />
+                      <Bar dataKey="count" fill="#fb7185" radius={[10, 10, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full rounded-2xl bg-slate-900/80" />
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-slate-950 p-5">
+              <h3 className="mb-4 text-xl font-black">Issues by Line</h3>
+              <div className="h-[320px]">
+                {isChartReady ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={dashboardIssueByLine}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                      <XAxis dataKey="line" stroke="#94a3b8" />
+                      <YAxis stroke="#94a3b8" />
+                      <Tooltip contentStyle={{ background: "#020617", border: "1px solid #1e293b", borderRadius: 12 }} />
+                      <Bar dataKey="count" fill="#38bdf8" radius={[10, 10, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full rounded-2xl bg-slate-900/80" />
+                )}
+              </div>
+            </div>
           </div>
         </section>
 
@@ -808,34 +1533,48 @@ export default function Home() {
 
                   <div className="mt-4 space-y-2">
                     {layoutForm.machines.map((machine, index) => (
-                      <div key={`${machine}-${index}`} className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950 p-2">
+                      <div key={`${machine}-${index}`} className="grid gap-3 rounded-xl border border-white/10 bg-slate-950 p-3 lg:grid-cols-[32px_1fr_220px_auto] lg:items-end">
                         <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-xs font-black text-slate-300">
                           {index + 1}
                         </span>
-                        <span className="min-w-0 flex-1 font-semibold text-white">{machine}</span>
-                        <button
-                          type="button"
-                          onClick={() => moveLayoutMachine(index, -1)}
-                          className="h-8 rounded-lg border border-white/10 bg-white/5 px-2 text-xs font-black transition hover:bg-white/10 disabled:opacity-30"
-                          disabled={index === 0}
-                        >
-                          Up
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => moveLayoutMachine(index, 1)}
-                          className="h-8 rounded-lg border border-white/10 bg-white/5 px-2 text-xs font-black transition hover:bg-white/10 disabled:opacity-30"
-                          disabled={index === layoutForm.machines.length - 1}
-                        >
-                          Down
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => removeLayoutMachine(index)}
-                          className="h-8 rounded-lg bg-rose-500/20 px-2 text-xs font-black text-rose-200 transition hover:bg-rose-500/30"
-                        >
-                          X
-                        </button>
+                        <div>
+                          <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Machine</span>
+                          <p className="font-semibold text-white">{machine}</p>
+                        </div>
+                        <label className="block">
+                          <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">S/N</span>
+                          <input
+                            value={layoutForm.machineSerials[machine] || ""}
+                            onChange={(event) => updateLayoutMachineSerial(machine, event.target.value)}
+                            placeholder="Serial number"
+                            className="w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300"
+                          />
+                        </label>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => moveLayoutMachine(index, -1)}
+                            className="h-9 rounded-lg border border-white/10 bg-white/5 px-3 text-xs font-black transition hover:bg-white/10 disabled:opacity-30"
+                            disabled={index === 0}
+                          >
+                            Up
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => moveLayoutMachine(index, 1)}
+                            className="h-9 rounded-lg border border-white/10 bg-white/5 px-3 text-xs font-black transition hover:bg-white/10 disabled:opacity-30"
+                            disabled={index === layoutForm.machines.length - 1}
+                          >
+                            Down
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeLayoutMachine(index)}
+                            className="h-9 rounded-lg bg-rose-500/20 px-3 text-xs font-black text-rose-200 transition hover:bg-rose-500/30"
+                          >
+                            X
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -867,6 +1606,7 @@ export default function Home() {
                       lineName: layout.lineName,
                       lastPmDate: getPmRecord(layout.line)?.last || "",
                       machines: layout.machines,
+                      machineSerials: layout.machineSerials,
                       customMachine: "",
                     })
                   }
@@ -886,6 +1626,7 @@ export default function Home() {
                     {layout.machines.map((machine) => (
                       <span key={machine} className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-slate-200">
                         {machine}
+                        {layout.machineSerials[machine] ? ` | S/N: ${layout.machineSerials[machine]}` : ""}
                       </span>
                     ))}
                   </div>
@@ -1083,6 +1824,597 @@ export default function Home() {
               >
                 Save Record
               </button>
+            </div>
+          </div>
+        </section>
+
+        <section className={`${activeView === "spare" ? "mb-6 block" : "hidden"} rounded-2xl border border-violet-300/20 bg-slate-900/80 p-5`}>
+          <div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-center">
+            <div>
+              <h2 className="text-2xl font-black">Add Machine Spare Part</h2>
+              <p className="mt-1 text-sm text-slate-400">Register spare parts and minimum stock by line and machine.</p>
+            </div>
+            <span className="inline-flex w-fit items-center gap-2 rounded-full bg-violet-400/10 px-3 py-1 text-sm font-semibold text-violet-200">
+              <Wrench className="h-4 w-4" />
+              Spare Part Master
+            </span>
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-[0.85fr_1.15fr]">
+            <div className="grid gap-4 rounded-2xl border border-white/10 bg-slate-950 p-4 md:grid-cols-2">
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Part Number</span>
+                <input
+                  value={sparePartForm.partNo}
+                  onChange={(event) => setSparePartForm({ ...sparePartForm, partNo: event.target.value })}
+                  placeholder="Part no."
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Spare Part Name</span>
+                <input
+                  value={sparePartForm.partName}
+                  onChange={(event) => setSparePartForm({ ...sparePartForm, partName: event.target.value })}
+                  placeholder="Nozzle / belt / sensor"
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Line</span>
+                <select
+                  value={sparePartForm.line}
+                  onChange={(event) => {
+                    const nextLine = event.target.value;
+                    const nextMachines = lineLayouts.find((layout) => layout.line === nextLine)?.machines || [];
+                    setSparePartForm({
+                      ...sparePartForm,
+                      line: nextLine,
+                      machine: nextMachines[0] || "",
+                    });
+                  }}
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+                >
+                  {activeLines.map((line) => (
+                    <option key={line}>{line}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Machine</span>
+                <select
+                  value={sparePartForm.machine}
+                  onChange={(event) => setSparePartForm({ ...sparePartForm, machine: event.target.value })}
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+                >
+                  {activeSpareLineMachines.map((machine) => (
+                    <option key={machine}>{machine}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Quantity</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={sparePartForm.qty}
+                  onChange={(event) => setSparePartForm({ ...sparePartForm, qty: Number(event.target.value) })}
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Minimum Stock</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={sparePartForm.minQty}
+                  onChange={(event) => setSparePartForm({ ...sparePartForm, minQty: Number(event.target.value) })}
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+                />
+              </label>
+            </div>
+
+            <div className="grid gap-4 rounded-2xl border border-white/10 bg-slate-950 p-4 md:grid-cols-2">
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Location</span>
+                <input
+                  value={sparePartForm.location}
+                  onChange={(event) => setSparePartForm({ ...sparePartForm, location: event.target.value })}
+                  placeholder="Shelf / cabinet / bin"
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Supplier</span>
+                <input
+                  value={sparePartForm.supplier}
+                  onChange={(event) => setSparePartForm({ ...sparePartForm, supplier: event.target.value })}
+                  placeholder="Supplier / maker"
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Owner / Technician</span>
+                <input
+                  value={sparePartForm.owner}
+                  onChange={(event) => setSparePartForm({ ...sparePartForm, owner: event.target.value })}
+                  placeholder="Responsible person"
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Updated Date</span>
+                <input
+                  type="date"
+                  value={sparePartForm.updatedDate}
+                  onChange={(event) => setSparePartForm({ ...sparePartForm, updatedDate: event.target.value })}
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+                />
+              </label>
+
+              <button
+                type="button"
+                onClick={saveSparePart}
+                className="rounded-xl bg-violet-400 px-5 py-3 font-black text-slate-950 transition hover:bg-violet-300 md:col-span-2"
+              >
+                Save Spare Part
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section className={`${activeView === "spare" ? "mb-6 grid" : "hidden"} gap-4 sm:grid-cols-2 xl:grid-cols-4`}>
+          <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-5">
+            <p className="text-sm text-slate-400">Spare Part Items</p>
+            <p className="mt-3 text-3xl font-black">{spareParts.length}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-5">
+            <p className="text-sm text-slate-400">Total Quantity</p>
+            <p className="mt-3 text-3xl font-black">{totalSpareQty}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-5">
+            <p className="text-sm text-slate-400">Low Stock</p>
+            <p className="mt-3 text-3xl font-black text-amber-200">{lowStockCount}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-5">
+            <p className="text-sm text-slate-400">Out of Stock</p>
+            <p className="mt-3 text-3xl font-black text-rose-200">{outOfStockCount}</p>
+          </div>
+        </section>
+
+        <section className={`${activeView === "spare" ? "block" : "hidden"} rounded-2xl border border-white/10 bg-slate-900/80 p-5`}>
+          <div className="mb-5 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+            <div>
+              <h2 className="text-2xl font-black">Machine Spare Part List</h2>
+              <p className="mt-1 text-sm text-slate-400">{spareMachinesTracked} line-machine groups tracked.</p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                <input
+                  value={spareQuery}
+                  onChange={(event) => setSpareQuery(event.target.value)}
+                  placeholder="Search spare parts"
+                  className="w-full rounded-xl border border-white/10 bg-slate-950 py-3 pl-10 pr-4 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300"
+                />
+              </div>
+
+              <select
+                value={spareLineFilter}
+                onChange={(event) => {
+                  setSpareLineFilter(event.target.value);
+                  setSpareMachineFilter("All");
+                }}
+                className="rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+              >
+                <option>All</option>
+                {activeLines.map((line) => (
+                  <option key={line}>{line}</option>
+                ))}
+              </select>
+
+              <select
+                value={spareMachineFilter}
+                onChange={(event) => setSpareMachineFilter(event.target.value)}
+                className="rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+              >
+                <option>All</option>
+                {spareMachineOptions.map((machine) => (
+                  <option key={machine}>{machine}</option>
+                ))}
+              </select>
+
+              <select
+                value={spareStockFilter}
+                onChange={(event) => setSpareStockFilter(event.target.value as "All" | "Low Stock" | "Out of Stock" | "In Stock")}
+                className="rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+              >
+                <option>All</option>
+                <option>In Stock</option>
+                <option>Low Stock</option>
+                <option>Out of Stock</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1120px] text-sm">
+              <thead className="border-b border-white/10 text-slate-300">
+                <tr>
+                  <th className="py-3 text-left">Part No.</th>
+                  <th className="text-left">Part Name</th>
+                  <th className="text-left">Line</th>
+                  <th className="text-left">Machine</th>
+                  <th className="text-left">Qty</th>
+                  <th className="text-left">Min</th>
+                  <th className="text-left">Status</th>
+                  <th className="text-left">Location</th>
+                  <th className="text-left">Supplier</th>
+                  <th className="text-left">Owner</th>
+                  <th className="text-left">Updated</th>
+                  <th className="text-left">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredSpareParts.length > 0 ? (
+                  filteredSpareParts.map((item) => {
+                    const stockStatus = getSpareStockStatus(item);
+
+                    return (
+                      <tr key={item.id} className="border-b border-white/5 transition hover:bg-white/[0.03]">
+                        <td className="py-3 font-bold text-cyan-200">{item.partNo}</td>
+                        <td>{item.partName}</td>
+                        <td>{item.line}</td>
+                        <td>{item.machine}</td>
+                        <td className="font-black">{item.qty}</td>
+                        <td>{item.minQty}</td>
+                        <td>
+                          <span
+                            className={`rounded-full px-3 py-1 text-xs font-bold ${
+                              stockStatus === "Out of Stock"
+                                ? "bg-rose-500/15 text-rose-200"
+                                : stockStatus === "Low Stock"
+                                  ? "bg-amber-500/15 text-amber-200"
+                                  : "bg-emerald-500/15 text-emerald-200"
+                            }`}
+                          >
+                            {stockStatus}
+                          </span>
+                        </td>
+                        <td>{item.location || "-"}</td>
+                        <td>{item.supplier || "-"}</td>
+                        <td>{item.owner}</td>
+                        <td>{item.updatedDate}</td>
+                        <td>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => updateSparePartQty(item.id, -1)}
+                              className="rounded-lg border border-white/10 bg-white/5 px-3 py-1 font-bold text-white hover:bg-white/10"
+                            >
+                              -1
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => updateSparePartQty(item.id, 1)}
+                              className="rounded-lg border border-white/10 bg-white/5 px-3 py-1 font-bold text-white hover:bg-white/10"
+                            >
+                              +1
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteSparePart(item.id)}
+                              className="rounded-lg border border-rose-300/20 bg-rose-400/10 px-3 py-1 font-bold text-rose-100 hover:bg-rose-400/20"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td colSpan={12} className="py-8 text-center text-slate-400">
+                      No spare parts match the current filter.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className={`${activeView === "machine" ? "mb-6 block" : "hidden"} rounded-2xl border border-rose-300/20 bg-slate-900/80 p-5`}>
+          <div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-center">
+            <div>
+              <h2 className="text-2xl font-black">Add Machine Issue</h2>
+              <p className="mt-1 text-sm text-slate-400">For line technicians to record machine breakdown history by line and machine.</p>
+            </div>
+            <span className="inline-flex w-fit items-center gap-2 rounded-full bg-rose-400/10 px-3 py-1 text-sm font-semibold text-rose-200">
+              <AlertTriangle className="h-4 w-4" />
+              Machine Issue Input
+            </span>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
+            <div className="grid gap-4 rounded-2xl border border-white/10 bg-slate-950 p-4 md:grid-cols-2">
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Issue Date</span>
+                <input
+                  type="date"
+                  value={machineIssueForm.date}
+                  onChange={(event) => setMachineIssueForm({ ...machineIssueForm, date: event.target.value })}
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Line</span>
+                <select
+                  value={machineIssueForm.line}
+                  onChange={(event) => {
+                    const nextLine = event.target.value;
+                    const nextMachines = lineLayouts.find((layout) => layout.line === nextLine)?.machines || [];
+                    setMachineIssueForm({
+                      ...machineIssueForm,
+                      line: nextLine,
+                      machine: nextMachines[0] || "",
+                    });
+                  }}
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+                >
+                  {activeLines.map((line) => (
+                    <option key={line}>{line}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Machine</span>
+                <select
+                  value={machineIssueForm.machine}
+                  onChange={(event) => setMachineIssueForm({ ...machineIssueForm, machine: event.target.value })}
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+                >
+                  {activeIssueLineMachines.map((machine) => (
+                    <option key={machine}>{machine}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Line Technician Name</span>
+                <input
+                  value={machineIssueForm.lineTechnician}
+                  onChange={(event) => setMachineIssueForm({ ...machineIssueForm, lineTechnician: event.target.value })}
+                  placeholder="Technician name"
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Downtime (min)</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={machineIssueForm.downtime}
+                  onChange={(event) => setMachineIssueForm({ ...machineIssueForm, downtime: Number(event.target.value) })}
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Status</span>
+                <select
+                  value={machineIssueForm.status}
+                  onChange={(event) => setMachineIssueForm({ ...machineIssueForm, status: event.target.value as MaintenanceStatus })}
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+                >
+                  <option>Repairing</option>
+                  <option>Pending</option>
+                  <option>Done</option>
+                </select>
+              </label>
+
+              <label className="block md:col-span-2">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Priority</span>
+                <select
+                  value={machineIssueForm.priority}
+                  onChange={(event) => setMachineIssueForm({ ...machineIssueForm, priority: event.target.value as HistoryItem["priority"] })}
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+                >
+                  <option>High</option>
+                  <option>Medium</option>
+                  <option>Low</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-slate-950 p-4">
+              <div className="mb-4 rounded-xl bg-black/20 p-3 text-sm text-slate-300">
+                Equipment Set: <span className="font-semibold text-white">{getEquipmentSet(machineIssueForm.line) || "Select a line"}</span>
+              </div>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Machine Issue Detail</span>
+                <textarea
+                  value={machineIssueForm.problem}
+                  onChange={(event) => setMachineIssueForm({ ...machineIssueForm, problem: event.target.value })}
+                  placeholder="Describe alarm, error, NG, abnormal sound, repair action, or symptom"
+                  rows={8}
+                  className="w-full resize-none rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300"
+                />
+              </label>
+
+              <button
+                onClick={saveMachineIssueRecord}
+                className="mt-4 w-full rounded-xl bg-rose-400 px-5 py-3 font-black text-slate-950 transition hover:bg-rose-300"
+              >
+                Save Machine Issue
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section className={`${activeView === "machine" ? "mb-6 grid" : "hidden"} gap-4 sm:grid-cols-2 xl:grid-cols-4`}>
+          <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-5">
+            <div className="mb-5 flex items-center justify-between">
+              <p className="text-sm text-slate-400">Machine Issues</p>
+              <AlertTriangle className="h-5 w-5 text-rose-300" />
+            </div>
+            <p className="mt-3 text-3xl font-black">{machineIssueRows.length}</p>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-5">
+            <div className="mb-5 flex items-center justify-between">
+              <p className="text-sm text-slate-400">Issue Downtime</p>
+              <Clock3 className="h-5 w-5 text-amber-300" />
+            </div>
+            <p className="mt-3 text-3xl font-black">{machineIssueDowntime} min</p>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-5">
+            <div className="mb-5 flex items-center justify-between">
+              <p className="text-sm text-slate-400">Top Issue Machine</p>
+              <Wrench className="h-5 w-5 text-cyan-300" />
+            </div>
+            <p className="mt-3 text-3xl font-black">{topIssueMachine}</p>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-5">
+            <div className="mb-5 flex items-center justify-between">
+              <p className="text-sm text-slate-400">Open Issues</p>
+              <Activity className="h-5 w-5 text-sky-300" />
+            </div>
+            <p className="mt-3 text-3xl font-black">{machineIssueRows.filter((item) => item.status !== "Done").length}</p>
+          </div>
+        </section>
+
+        <section className={`${activeView === "machine" ? "mb-6 grid" : "hidden"} gap-6 xl:grid-cols-[0.8fr_1.2fr]`}>
+          <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-5">
+            <div className="mb-5">
+              <h2 className="text-2xl font-black">Frequent Machine Issues</h2>
+              <p className="mt-1 text-sm text-slate-400">Machines ranked by issue count from maintenance history.</p>
+            </div>
+
+            <div className="space-y-3">
+              {machineIssueSummary.length > 0 ? (
+                machineIssueSummary.slice(0, 8).map((item, index) => {
+                  const maxCount = machineIssueSummary[0]?.count || 1;
+                  const width = `${Math.max(8, Math.round((item.count / maxCount) * 100))}%`;
+
+                  return (
+                    <div key={item.machine} className="rounded-xl border border-white/10 bg-slate-950 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="font-black text-white">{item.machine}</p>
+                          <p className="mt-1 text-sm text-slate-400">Latest: {item.latest}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-2xl font-black">{item.count}</p>
+                          <p className="text-xs text-slate-400">{item.downtime} min</p>
+                        </div>
+                      </div>
+                      <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
+                        <div className="h-full rounded-full" style={{ width, background: chartColors[index % chartColors.length] }} />
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="rounded-xl border border-emerald-300/20 bg-emerald-400/10 p-4 text-sm font-semibold text-emerald-100">
+                  No machine issue history found.
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-5">
+            <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h2 className="text-2xl font-black">Machine Issue History</h2>
+                <p className="mt-1 text-sm text-slate-400">Review machine breakdown, repair, NG, alarm, and downtime records.</p>
+              </div>
+
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                  <input
+                    value={machineQuery}
+                    onChange={(event) => setMachineQuery(event.target.value)}
+                    placeholder="Search machine issues"
+                    className="w-full rounded-xl border border-white/10 bg-slate-950 py-3 pl-10 pr-4 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300 sm:w-72"
+                  />
+                </div>
+
+                <select
+                  value={machineStatusFilter}
+                  onChange={(event) => setMachineStatusFilter(event.target.value as "All" | MaintenanceStatus)}
+                  className="rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+                >
+                  <option>All</option>
+                  <option>Done</option>
+                  <option>Repairing</option>
+                  <option>Pending</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[900px] text-sm">
+                <thead className="border-b border-white/10 text-slate-300">
+                  <tr>
+                    <th className="py-3 text-left">Date</th>
+                    <th className="text-left">Line</th>
+                    <th className="text-left">Machine</th>
+                    <th className="text-left">Problem Detail</th>
+                    <th className="text-left">Technician</th>
+                    <th className="text-left">Downtime</th>
+                    <th className="text-left">Priority</th>
+                    <th className="text-left">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredMachineIssues.length > 0 ? (
+                    filteredMachineIssues.map((item) => (
+                      <tr key={item.id} className="border-b border-white/5 transition hover:bg-white/[0.03]">
+                        <td className="py-3">{item.date}</td>
+                        <td>{item.line}</td>
+                        <td className="font-bold text-cyan-200">{item.machine}</td>
+                        <td>{item.problem}</td>
+                        <td>{item.technician}</td>
+                        <td>{item.downtime} min</td>
+                        <td>
+                          <span className={`rounded-full px-3 py-1 text-xs font-bold ${priorityClass(item.priority)}`}>
+                            {item.priority}
+                          </span>
+                        </td>
+                        <td>
+                          <span className={`rounded-full px-3 py-1 text-xs font-bold ring-1 ${statusClass(item.status)}`}>
+                            {item.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={8} className="py-8 text-center text-slate-400">
+                        No machine issue records match the current filter.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         </section>
