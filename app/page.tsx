@@ -202,6 +202,17 @@ function getMachineFlowOrder(machine: string) {
   return 70;
 }
 
+function getMachineImageSrc(machine: string) {
+  const normalized = machine.toLowerCase();
+
+  if (normalized.includes("printer")) return "/images/machines/printer.png";
+  if (normalized.includes("spi")) return "/images/machines/spi.png";
+  if (normalized.includes("reflow")) return "/images/machines/reflow.png";
+  if (normalized.includes("aoi")) return "/images/machines/aoi.png";
+  if (isMounterMachine(machine)) return "/images/machines/mounter.png";
+  return "/images/machines/mounter.png";
+}
+
 function getLineMachineRows(layout: LineLayout) {
   let mounterNumber = 0;
 
@@ -216,6 +227,7 @@ function getLineMachineRows(layout: LineLayout) {
         machine,
         displayName,
         serialNumber: layout.machineSerials[machine] || "",
+        imageSrc: getMachineImageSrc(machine),
       };
     });
 }
@@ -1662,11 +1674,17 @@ export default function Home() {
                     {getLineMachineRows(layout).map((item) => (
                       <div
                         key={item.machine}
-                        className="grid grid-cols-[28px_1fr] items-center gap-3 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2"
+                        className="grid grid-cols-[64px_1fr] items-center gap-3 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2"
                       >
-                        <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-400/10 text-cyan-200">
-                          <Wrench className="h-3.5 w-3.5" />
-                        </span>
+                        <div className="relative h-14 w-16 overflow-hidden rounded-lg border border-white/10 bg-slate-900">
+                          <Image
+                            src={item.imageSrc}
+                            alt=""
+                            fill
+                            sizes="64px"
+                            className="object-cover"
+                          />
+                        </div>
                         <div className="min-w-0">
                           <p className="truncate text-sm font-black text-white">{item.displayName}</p>
                           <p className="truncate text-xs font-semibold text-slate-400">
