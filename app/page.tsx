@@ -97,7 +97,6 @@ const initialHistory: HistoryItem[] = [];
 const initialPmList: PmItem[] = [];
 
 const chartColors = ["#14b8a6", "#38bdf8", "#f97316", "#f43f5e", "#a78bfa", "#84cc16"];
-const technicians = ["Maintenance Team"];
 const machineOptions = ["Printer", "SPI", "Mounter", "Reflow", "AOI", "Loader", "Unloader", "Conveyor", "Buffer", "NG Buffer"];
 
 function daysBetween(targetDate: string) {
@@ -162,8 +161,9 @@ export default function Home() {
     date: "",
     line: "",
     equipmentSet: "",
-    problem: "Full Line Preventive Maintenance",
-    technician: "Maintenance Team",
+    workItems: [] as string[],
+    remark: "",
+    technician: "",
     status: "Done" as MaintenanceStatus,
     downtime: 0,
     priority: "Medium" as HistoryItem["priority"],
@@ -236,6 +236,7 @@ export default function Home() {
           ...current,
           line: layouts[0].line,
           equipmentSet: machinesToText(layouts[0].machines),
+          workItems: [],
         };
       });
 
@@ -246,6 +247,10 @@ export default function Home() {
   }, []);
 
   const activeLines = useMemo(() => lineLayouts.map((layout) => layout.line), [lineLayouts]);
+  const activeLineMachines = useMemo(
+    () => lineLayouts.find((layout) => layout.line === formData.line)?.machines || [],
+    [formData.line, lineLayouts],
+  );
 
   const getEquipmentSet = useCallback((line: string) => {
     const layout = lineLayouts.find((item) => item.line === line);
@@ -317,6 +322,15 @@ export default function Home() {
   const completedCount = historyData.filter((item) => item.status === "Done").length;
   const urgentPmCount = pmData.filter((item) => item.remaining <= 3).length;
   const openJobs = historyData.filter((item) => item.status !== "Done").length;
+
+  const toggleWorkItem = (machine: string) => {
+    setFormData((current) => ({
+      ...current,
+      workItems: current.workItems.includes(machine)
+        ? current.workItems.filter((item) => item !== machine)
+        : [...current.workItems, machine],
+    }));
+  };
 
   const updateLayoutLine = (value: string) => {
     const nextLine = value.toUpperCase();
@@ -455,6 +469,7 @@ export default function Home() {
             ...current,
             line,
             equipmentSet,
+            workItems: [],
           }
         : current,
     );
@@ -479,10 +494,31 @@ export default function Home() {
       return;
     }
 
+    if (formData.workItems.length === 0) {
+      alert("Please select work items");
+      return;
+    }
+
+    if (!formData.technician.trim()) {
+      alert("Please enter technician name");
+      return;
+    }
+
+    const problemDetail = [
+      `Completed: ${formData.workItems.join(", ")}`,
+      formData.remark.trim() ? `Remark: ${formData.remark.trim()}` : "",
+    ].filter(Boolean).join(" | ");
+
     const newRecord: HistoryItem = {
       id: Date.now(),
-      ...formData,
-      downtime: Number(formData.downtime) || 0,
+      date: formData.date,
+      line: formData.line,
+      equipmentSet: formData.equipmentSet,
+      problem: problemDetail,
+      technician: formData.technician.trim(),
+      status: "Done",
+      downtime: 0,
+      priority: "Medium",
     };
 
     const { error: historyError } = await supabase.from("maintenance_history").insert({
@@ -536,8 +572,9 @@ export default function Home() {
       date: "",
       line: activeLines[0] || "",
       equipmentSet: activeLines[0] ? getEquipmentSet(activeLines[0]) : "",
-      problem: "Full Line Preventive Maintenance",
-      technician: "Maintenance Team",
+      workItems: [],
+      remark: "",
+      technician: "",
       status: "Done",
       downtime: 0,
       priority: "Medium",
@@ -557,6 +594,16 @@ export default function Home() {
               className="absolute inset-0 h-full w-full object-cover opacity-50"
             />
             <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(2,6,23,0.96),rgba(2,6,23,0.78)_45%,rgba(2,6,23,0.42)),radial-gradient(circle_at_top_left,rgba(20,184,166,0.35),transparent_34%)]" />
+            <button
+              onClick={() => {
+                localStorage.removeItem("login");
+                router.push("/login");
+              }}
+              className="absolute right-4 top-4 z-20 inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/70 px-4 py-2 text-sm font-bold text-white backdrop-blur transition hover:bg-white/10 md:right-6 md:top-6"
+            >
+              <LogOut className="h-4 w-4" />
+              Logout
+            </button>
             <div className="relative z-10">
               <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-sm text-cyan-100">
                 <Sparkles className="h-4 w-4" />
@@ -616,16 +663,6 @@ export default function Home() {
                   Add Record
                 </button>
 
-                <button
-                  onClick={() => {
-                    localStorage.removeItem("login");
-                    router.push("/login");
-                  }}
-                  className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-5 py-3 font-bold text-white transition hover:bg-white/10"
-                >
-                  <LogOut className="h-5 w-5" />
-                  Logout
-                </button>
               </div>
             </div>
 
@@ -913,7 +950,7 @@ export default function Home() {
           <div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-center">
             <div>
               <h2 className="text-2xl font-black">Add Maintenance Record</h2>
-              <p className="mt-1 text-sm text-slate-400">Each PM record is for the whole SMT line: Printer, SPI, Mounter, Reflow, and AOI together.</p>
+              <p className="mt-1 text-sm text-slate-400">Select the line, work date, completed items, remark, and technician name.</p>
             </div>
             <span className="inline-flex w-fit items-center gap-2 rounded-full bg-cyan-400/10 px-3 py-1 text-sm font-semibold text-cyan-200">
               <BarChart3 className="h-4 w-4" />
@@ -921,88 +958,123 @@ export default function Home() {
             </span>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <input
-              type="date"
-              value={formData.date}
-              onChange={(event) => setFormData({ ...formData, date: event.target.value })}
-              className="rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
-            />
+          <div className="grid gap-4 lg:grid-cols-[0.75fr_1.25fr]">
+            <div className="grid gap-4 rounded-2xl border border-white/10 bg-slate-950 p-4 md:grid-cols-2 lg:grid-cols-1">
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Line</span>
+                <select
+                  value={formData.line}
+                  onChange={(event) => {
+                    const nextLine = event.target.value;
+                    setFormData({
+                      ...formData,
+                      line: nextLine,
+                      equipmentSet: getEquipmentSet(nextLine),
+                      workItems: [],
+                    });
+                  }}
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+                >
+                  {activeLines.map((line) => (
+                    <option key={line}>{line}</option>
+                  ))}
+                </select>
+              </label>
 
-            <select
-              value={formData.line}
-              onChange={(event) => {
-                const nextLine = event.target.value;
-                setFormData({
-                  ...formData,
-                  line: nextLine,
-                  equipmentSet: getEquipmentSet(nextLine),
-                });
-              }}
-              className="rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
-            >
-              {activeLines.map((line) => (
-                <option key={line}>{line}</option>
-              ))}
-            </select>
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Work Date</span>
+                <input
+                  type="date"
+                  value={formData.date}
+                  onChange={(event) => setFormData({ ...formData, date: event.target.value })}
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
+                />
+              </label>
 
-            <div className="rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-slate-300">
-              <span className="block text-xs text-slate-500">Equipment Set</span>
-              <span className="font-semibold text-white">{formData.equipmentSet}</span>
+              <label className="block md:col-span-2 lg:col-span-1">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Technician Name</span>
+                <input
+                  value={formData.technician}
+                  onChange={(event) => setFormData({ ...formData, technician: event.target.value })}
+                  placeholder="Name"
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300"
+                />
+              </label>
             </div>
 
-            <select
-              value={formData.technician}
-              onChange={(event) => setFormData({ ...formData, technician: event.target.value })}
-              className="rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
-            >
-              {technicians.map((technician) => (
-                <option key={technician}>{technician}</option>
-              ))}
-            </select>
+            <div className="rounded-2xl border border-white/10 bg-slate-950 p-4">
+              <div className="mb-4 rounded-xl bg-black/20 p-3 text-sm text-slate-300">
+                Equipment Set: <span className="font-semibold text-white">{formData.equipmentSet || "Select a line"}</span>
+              </div>
 
-            <input
-              value={formData.problem}
-              onChange={(event) => setFormData({ ...formData, problem: event.target.value })}
-              placeholder="Problem / PM detail"
-              className="rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300 md:col-span-2"
-            />
+              <div>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-sm font-bold text-slate-300">Work Completed</p>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFormData({
+                        ...formData,
+                        workItems: formData.workItems.length === activeLineMachines.length ? [] : activeLineMachines,
+                      })
+                    }
+                    className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold text-cyan-100 transition hover:bg-white/10"
+                    disabled={activeLineMachines.length === 0}
+                  >
+                    {formData.workItems.length === activeLineMachines.length && activeLineMachines.length > 0 ? "Clear All" : "Select All"}
+                  </button>
+                </div>
 
-            <input
-              type="number"
-              min={0}
-              value={formData.downtime}
-              onChange={(event) => setFormData({ ...formData, downtime: Number(event.target.value) })}
-              placeholder="Downtime minutes"
-              className="rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300"
-            />
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                  {activeLineMachines.length > 0 ? (
+                    activeLineMachines.map((machine) => {
+                      const isChecked = formData.workItems.includes(machine);
 
-            <select
-              value={formData.status}
-              onChange={(event) => setFormData({ ...formData, status: event.target.value as MaintenanceStatus })}
-              className="rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
-            >
-              <option>Done</option>
-              <option>Repairing</option>
-              <option>Pending</option>
-            </select>
+                      return (
+                        <label
+                          key={machine}
+                          className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 text-sm font-semibold transition ${
+                            isChecked
+                              ? "border-emerald-300/50 bg-emerald-400/15 text-emerald-100"
+                              : "border-white/10 bg-slate-900 text-slate-200 hover:border-cyan-300/40"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => toggleWorkItem(machine)}
+                            className="h-4 w-4 accent-emerald-400"
+                          />
+                          {machine}
+                        </label>
+                      );
+                    })
+                  ) : (
+                    <div className="rounded-xl border border-amber-300/20 bg-amber-400/10 p-4 text-sm font-semibold text-amber-100 sm:col-span-2 xl:col-span-3">
+                      Please add a line layout first.
+                    </div>
+                  )}
+                </div>
+              </div>
 
-            <select
-              value={formData.priority}
-              onChange={(event) => setFormData({ ...formData, priority: event.target.value as HistoryItem["priority"] })}
-              className="rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-cyan-300"
-            >
-              <option>Low</option>
-              <option>Medium</option>
-              <option>High</option>
-            </select>
+              <label className="mt-4 block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Remark</span>
+                <textarea
+                  value={formData.remark}
+                  onChange={(event) => setFormData({ ...formData, remark: event.target.value })}
+                  placeholder="Remark / note"
+                  rows={4}
+                  className="w-full resize-none rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300"
+                />
+              </label>
 
-            <button
-              onClick={saveMaintenanceRecord}
-              className="rounded-xl bg-emerald-400 px-5 py-3 font-black text-slate-950 transition hover:bg-emerald-300 md:col-span-2 xl:col-span-1"
-            >
-              Save Record
-            </button>
+              <button
+                onClick={saveMaintenanceRecord}
+                className="mt-4 w-full rounded-xl bg-emerald-400 px-5 py-3 font-black text-slate-950 transition hover:bg-emerald-300"
+              >
+                Save Record
+              </button>
+            </div>
           </div>
         </section>
 
