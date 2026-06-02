@@ -184,6 +184,42 @@ function machinesToText(machines: string[]) {
   return machines.map((machine) => machine.trim()).filter(Boolean).join(" + ");
 }
 
+function isMounterMachine(machine: string) {
+  const normalized = machine.toLowerCase();
+  return normalized.includes("mounter") || normalized.includes("hi-speed") || normalized.includes("multi");
+}
+
+function getMachineFlowOrder(machine: string) {
+  const normalized = machine.toLowerCase();
+
+  if (normalized.includes("printer")) return 10;
+  if (normalized.includes("spi")) return 20;
+  if (isMounterMachine(machine)) return 30;
+  if (normalized.includes("aoi1")) return 40;
+  if (normalized === "aoi") return 45;
+  if (normalized.includes("reflow")) return 50;
+  if (normalized.includes("aoi2")) return 60;
+  return 70;
+}
+
+function getLineMachineRows(layout: LineLayout) {
+  let mounterNumber = 0;
+
+  return layout.machines
+    .map((machine, index) => ({ machine, index }))
+    .sort((a, b) => getMachineFlowOrder(a.machine) - getMachineFlowOrder(b.machine) || a.index - b.index)
+    .map(({ machine }) => {
+      const isMounter = isMounterMachine(machine);
+      const displayName = isMounter ? `Mounter ${++mounterNumber}` : machine;
+
+      return {
+        machine,
+        displayName,
+        serialNumber: layout.machineSerials[machine] || "",
+      };
+    });
+}
+
 function statusClass(status: MaintenanceStatus) {
   if (status === "Done") return "bg-emerald-500/15 text-emerald-300 ring-emerald-400/30";
   if (status === "Repairing") return "bg-amber-500/15 text-amber-200 ring-amber-400/30";
@@ -1622,12 +1658,22 @@ export default function Home() {
                     </span>
                   </div>
 
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {layout.machines.map((machine) => (
-                      <span key={machine} className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-slate-200">
-                        {machine}
-                        {layout.machineSerials[machine] ? ` | S/N: ${layout.machineSerials[machine]}` : ""}
-                      </span>
+                  <div className="mt-4 grid gap-2">
+                    {getLineMachineRows(layout).map((item) => (
+                      <div
+                        key={item.machine}
+                        className="grid grid-cols-[28px_1fr] items-center gap-3 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2"
+                      >
+                        <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-400/10 text-cyan-200">
+                          <Wrench className="h-3.5 w-3.5" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-black text-white">{item.displayName}</p>
+                          <p className="truncate text-xs font-semibold text-slate-400">
+                            S/N: <span className="text-slate-200">{item.serialNumber || "-"}</span>
+                          </p>
+                        </div>
+                      </div>
                     ))}
                   </div>
 
